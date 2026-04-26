@@ -1,2 +1,3 @@
 # Pupil
-Let agents perceive, indicate, and act in real applications.
+
+**Let agents perceive, indicate, and act in any application.**
