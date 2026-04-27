@@ -4,7 +4,11 @@
 
 ## MCP server (v1)
 
-The Python MCP server lives in `mcp/main.py` and exposes one tool: `perceive`.
+The Python MCP server lives in `mcp/main.py` and exposes these tools:
+
+- `perceive(overlay_hwnd: int | None = None) -> list[dict]`
+- `indicate_rect(x: int, y: int, w: int, h: int, color: str = "#00FFFF", alpha: float = 0.14) -> dict`
+- `clear() -> dict`
 
 ### Run locally
 
@@ -16,8 +20,10 @@ The Python MCP server lives in `mcp/main.py` and exposes one tool: `perceive`.
 
 ### Tool contract
 
-- `perceive(overlay_hwnd: int = 0) -> list[dict]`
-- Returns parsed UI nodes from `PerceptionApi.Perceive`.
+- `perceive` returns parsed UI nodes from `PerceptionApi.Perceive`.
+- `perceive` automatically excludes the overlay window by default.
+- `indicate_rect` draws one highlighted rectangle and replaces any previous one.
+- `clear` removes the current overlay rectangle.
 - If the DLL is missing, build first with `.\scripts\build-core.ps1`.
 
 ### Cursor MCP registration (example)
