@@ -1,9 +1,11 @@
 namespace Pupil.Core;
 
+// Heuristic cleanup pass that turns raw UIA nodes into a stable, low-noise output set.
 internal static class PostProcess
 {
     internal static List<RawNode> Nms(List<RawNode> raw)
     {
+        // Process interactive controls first so they are more likely to survive overlap suppression.
         var sorted = raw
             .OrderBy(x => PerceptionConstants.InteractiveTypes.Contains(x.Type) ? 0 : 1)
             .ThenBy(x => x.Desc)
@@ -19,6 +21,7 @@ internal static class PostProcess
                                el.Rect.X + el.Rect.W > existing.Rect.X &&
                                el.Rect.Y < existing.Rect.Y + existing.Rect.H &&
                                el.Rect.Y + el.Rect.H > existing.Rect.Y;
+                // IoU threshold suppresses near-duplicate boxes emitted by nested/overlapping UIA nodes.
                 if (overlaps && Geometry.Iou(el.Rect, existing.Rect) > PerceptionConstants.IouThreshold)
                 {
                     keep = false;
@@ -35,6 +38,7 @@ internal static class PostProcess
 
     internal static List<RawNode> MergeTextNodes(List<RawNode> results)
     {
+        // Join horizontally adjacent text fragments on the same line into single readable labels.
         var merged = new List<RawNode>();
         var i = 0;
         while (i < results.Count)
@@ -76,6 +80,7 @@ internal static class PostProcess
 
     internal static List<RawNode> FilterNoise(List<RawNode> results, HashSet<string> windowTitles)
     {
+        // Drop tiny/noisy controls and non-text nodes that duplicate top-level window titles.
         return results.Where(el =>
             el.Rect.W >= 5 &&
             el.Rect.H >= 5 &&
@@ -85,6 +90,7 @@ internal static class PostProcess
 
     internal static TreeNode BuildContainmentTree(List<RawNode> results, int sw, int sh)
     {
+        // Create a synthetic root and assign each node to the smallest strict containing parent.
         var root = new TreeNode(new RawNode("_root", "_root", new RectOut(0, 0, sw, sh), 0, 999999));
         var nodes = new List<(TreeNode n, int x1, int y1, int x2, int y2, int area)>();
         foreach (var result in results)
@@ -132,6 +138,7 @@ internal static class PostProcess
 
     internal static List<RawNode> ExtractLeaves(TreeNode root)
     {
+        // Keep interactive leaves (or non-interactive terminal nodes) for concise final output.
         var output = new List<RawNode>();
         Dfs(root);
         return output;
@@ -158,6 +165,7 @@ internal static class PostProcess
             {
                 if (PerceptionConstants.InteractiveTypes.Contains(node.Data.Type))
                 {
+                    // Prefer the deepest interactive element to avoid returning both container and child actions.
                     if (!HasInteractiveDesc(node))
                     {
                         output.Add(node.Data);

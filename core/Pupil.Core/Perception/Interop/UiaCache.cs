@@ -2,12 +2,14 @@ using UIA = Interop.UIAutomationClient;
 
 namespace Pupil.Core;
 
+// Builds a UIA cache request and traverses cached elements to produce normalized RawNode records.
 internal static class UiaCache
 {
     internal static (UIA.IUIAutomation automation, UIA.IUIAutomationCacheRequest cacheRequest) BuildCacheRequest()
     {
         UIA.IUIAutomation automation = new UIA.CUIAutomation8();
         var cr = automation.CreateCacheRequest();
+        // Cache all properties used by labeling/filtering so traversal avoids live cross-process calls.
         foreach (var prop in new[]
                  {
                      PerceptionConstants.PropBoundingRect, PerceptionConstants.PropControlType, PerceptionConstants.PropName,
@@ -45,6 +47,7 @@ internal static class UiaCache
         var ctypeId = Convert.ToInt32(CachedProp(element, PerceptionConstants.PropControlType) ?? 0);
         var ctype = PerceptionConstants.ControlTypeNames.TryGetValue(ctypeId, out var found) ? found : ctypeId.ToString();
 
+        // Clip each element to the best matching visible region of the hosting top-level window.
         var (rx, ry, rw, rh) = Geometry.ClipRectToRegions(
             brect.Left,
             brect.Top,
@@ -56,6 +59,7 @@ internal static class UiaCache
         var ownLabel = isVisible ? NodeLabelCached(element, inheritedLabel is null ? ctype : null) : null;
         var closestLabel = ownLabel ?? inheritedLabel;
 
+        // Count descendants while traversing children depth-first; used later during post-processing.
         var totalDesc = 0;
         try
         {
@@ -106,6 +110,7 @@ internal static class UiaCache
 
     private static string? NodeLabelCached(UIA.IUIAutomationElement element, string? fallbackLabel)
     {
+        // Prefer semantic names, then help text, and finally carry contextual fallback from parent/type.
         var name = SafeToString(CachedProp(element, PerceptionConstants.PropName));
         var helpText = SafeToString(CachedProp(element, PerceptionConstants.PropHelpText));
 
@@ -120,6 +125,7 @@ internal static class UiaCache
         var tokens = NodeStateTokensCached(element);
         if (tokens.Count > 0)
         {
+            // Append concise interaction state (enabled/selected/value/etc.) for better downstream prompts.
             var suffix = string.Join(", ", tokens);
             if (suffix.Length > 120)
             {
@@ -141,6 +147,7 @@ internal static class UiaCache
 
     private static List<string> NodeStateTokensCached(UIA.IUIAutomationElement element)
     {
+        // Build a compact state vector from cached properties to avoid extra pattern calls.
         var tokens = new List<string>();
 
         var isEnabled = CachedProp(element, PerceptionConstants.PropIsEnabled);

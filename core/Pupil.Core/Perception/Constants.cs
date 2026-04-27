@@ -1,10 +1,13 @@
 namespace Pupil.Core;
 
+// Shared IDs and heuristics used across collection, labeling, and post-processing.
 internal static class PerceptionConstants
 {
+    // Overlap threshold used by NMS to suppress near-duplicate nodes.
     internal const double IouThreshold = 0.90;
     internal const int TreeScopeSubtree = 7;
 
+    // UIAutomation property IDs cached during traversal.
     internal const int PropBoundingRect = 30001;
     internal const int PropControlType = 30003;
     internal const int PropName = 30005;
@@ -23,11 +26,13 @@ internal static class PerceptionConstants
     internal const int PropAriaRole = 30101;
     internal const int PropAriaProperties = 30102;
 
+    // UIAutomation pattern IDs requested in the cache.
     internal const int PatternValue = 10002;
     internal const int PatternExpandCollapse = 10005;
     internal const int PatternSelectionItem = 10010;
     internal const int PatternToggle = 10015;
 
+    // Control types prioritized in the final actionable output.
     internal static readonly HashSet<string> InteractiveTypes =
     [
         "ButtonControl",
@@ -44,8 +49,10 @@ internal static class PerceptionConstants
         "SplitButtonControl",
     ];
 
+    // Known low-signal control types.
     internal static readonly HashSet<string> NoiseTypes = ["SeparatorControl"];
 
+    // Mapping from UIA numeric control type ID to readable name.
     internal static readonly Dictionary<int, string> ControlTypeNames = new()
     {
         [50000] = "ButtonControl",

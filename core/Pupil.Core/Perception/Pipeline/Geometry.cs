@@ -1,9 +1,11 @@
 namespace Pupil.Core;
 
+// Rectangle helpers used for clipping, occlusion subtraction, and overlap scoring.
 internal static class Geometry
 {
     internal static (int x, int y, int w, int h) ClipRectToRegions(int x, int y, int w, int h, List<RectI> regions)
     {
+        // Keep the largest intersection so each node maps to a single visible fragment.
         RectI? best = null;
         var bestArea = 0;
         var nodeRect = new RectI(x, y, x + w, y + h);
@@ -31,6 +33,7 @@ internal static class Geometry
 
     internal static List<RectI> SubtractMany(RectI @base, List<RectI> cuts)
     {
+        // Iteratively carve out occluded areas; output may contain multiple visible fragments.
         var fragments = new List<RectI> { @base };
         foreach (var cut in cuts)
         {
@@ -59,6 +62,7 @@ internal static class Geometry
         var b = @base;
         var i = inter.Value;
         var outRects = new List<RectI>();
+        // Split into up to four axis-aligned bands around the intersection.
         if (b.Top < i.Top)
         {
             outRects.Add(new RectI(b.Left, b.Top, b.Right, i.Top));
@@ -91,6 +95,7 @@ internal static class Geometry
 
     internal static double Iou(RectOut a, RectOut b)
     {
+        // Intersection-over-union for de-duplicating near-identical bounding boxes.
         var iw = Math.Max(0, Math.Min(a.X + a.W, b.X + b.W) - Math.Max(a.X, b.X));
         var ih = Math.Max(0, Math.Min(a.Y + a.H, b.Y + b.H) - Math.Max(a.Y, b.Y));
         var inter = iw * ih;

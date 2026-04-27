@@ -1,5 +1,6 @@
 namespace Pupil.Core;
 
+// Enumerates visible desktop windows and collects cached UIA nodes from regions that are still visible on screen.
 internal static class VisibleWindowsCollector
 {
     internal static (List<RawNode> raw, HashSet<string> windowTitles, int considered, int scanned) CollectRawVisibleWindows(
@@ -9,8 +10,10 @@ internal static class VisibleWindowsCollector
         int maxWindows = 6,
         double minVisibleRatio = 0.02)
     {
+        // Build one cache request reused for every selected top-level window.
         var (automation, cacheRequest) = UiaCache.BuildCacheRequest();
         var hwnds = EnumerateVisibleWindowsZOrder(sw, sh, excludeHwnd);
+        // Estimate what portion of each window is still visible after front windows occlude it.
         var selected = ComputeVisibleWindowRegions(hwnds, sw, sh, maxWindows, minVisibleRatio);
 
         var raw = new List<RawNode>();
@@ -56,6 +59,7 @@ internal static class VisibleWindowsCollector
             {
                 return true;
             }
+            // Keep only windows with a non-empty intersection with the current screen.
             var rect = WindowRect(hwnd, sw, sh);
             if (rect is null || Geometry.RectArea(rect.Value) == 0)
             {
@@ -87,6 +91,7 @@ internal static class VisibleWindowsCollector
         int maxWindows,
         double minVisibleRatio)
     {
+        // Accumulates already-kept front windows that can occlude windows behind them.
         var occluders = new List<RectI>();
         var kept = new List<(nint hwnd, List<RectI> visibleRegions, RectI rect)>();
         foreach (var hwnd in hwndsFrontToBack)
@@ -96,6 +101,7 @@ internal static class VisibleWindowsCollector
             {
                 continue;
             }
+            // Subtract all known occluders to approximate the actually visible pieces of this window.
             var visibleRegions = Geometry.SubtractMany(rect.Value, occluders);
             var visibleArea = visibleRegions.Sum(Geometry.RectArea);
             var totalArea = Geometry.RectArea(rect.Value);
@@ -106,6 +112,7 @@ internal static class VisibleWindowsCollector
             var ratio = (double)visibleArea / totalArea;
             if (visibleArea <= 0 || ratio < minVisibleRatio)
             {
+                // Even skipped windows are added as occluders so deeper windows are not over-counted.
                 occluders.Add(rect.Value);
                 continue;
             }

@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace Pupil.Core;
 
+// Minimal Win32 interop surface used for screen and top-level window enumeration.
 internal static class NativeMethods
 {
     internal delegate bool EnumWindowsProc(nint hWnd, nint lParam);
@@ -30,5 +31,6 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern bool GetWindowRect(nint hWnd, out RECT rect);
 
+    // SM_CXSCREEN (0), SM_CYSCREEN (1).
     internal static (int sw, int sh) ScreenSize() => (GetSystemMetrics(0), GetSystemMetrics(1));
 }
