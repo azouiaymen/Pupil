@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 from clr_loader import get_coreclr
@@ -29,9 +30,15 @@ def main() -> None:
         sys.exit(1)
 
     clr.AddReference(str(_DLL.resolve()))
-    from Pupil.Core import Hello  # noqa: PLC0415
+    from Pupil.Core import PerceptionApi  # noqa: PLC0415
 
-    print(Hello.Say())
+    n = 0
+    while True:
+        n += 1
+        t0 = time.perf_counter()
+        _ = PerceptionApi.Perceive()
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        print(f"loop {n}: {dt_ms:.1f} ms", flush=True)
 
 
 if __name__ == "__main__":

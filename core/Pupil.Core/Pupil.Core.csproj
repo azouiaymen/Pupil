@@ -5,5 +5,10 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Pupil.Core</RootNamespace>
     <AssemblyName>Pupil.Core</AssemblyName>
+    <!-- Needed so pythonnet can load Pupil.Core.dll with NuGet deps beside it -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Interop.UIAutomationClient" Version="10.19041.0" />
+  </ItemGroup>
 </Project>
