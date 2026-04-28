@@ -4,12 +4,18 @@
   "description": "Pupil overlay bridge runtime",
   "private": true,
   "scripts": {
-    "start": "electron bridge/main.cjs"
+    "start": "electron bridge/main.cjs",
+    "check:bridge": "node --check bridge/main.cjs && node --check bridge/preload.cjs && node --check bridge/renderer.js"
   },
-  "keywords": ["overlay", "electron"],
+  "keywords": [
+    "overlay",
+    "electron"
+  ],
   "license": "MIT",
   "devDependencies": {
     "electron": "41.3.0"
   },
-  "dependencies": {}
+  "dependencies": {
+    "lucide": "^1.12.0"
+  }
 }

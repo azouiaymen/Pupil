@@ -9,4 +9,7 @@ contextBridge.exposeInMainWorld('overlayApi', {
   sendEvent(message) {
     ipcRenderer.send('overlay:event', message);
   },
+  setInteractive(active) {
+    ipcRenderer.send('overlay:interactivity', { active: Boolean(active) });
+  },
 });

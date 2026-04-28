@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      lucide:
+        specifier: ^1.12.0
+        version: 1.12.0
     devDependencies:
       electron:
         specifier: 41.3.0
@@ -180,6 +184,9 @@ packages:
   lowercase-keys@2.0.0:
     resolution: {integrity: sha512-tqNXrS78oMOE73NMxK4EMLQsQowWf8jKooH9g7xPavRT706R6bkQJ6DY2Te7QukaZsulxa30wQ7bk0pm4XiHmA==}
     engines: {node: '>=8'}
+
+  lucide@1.12.0:
+    resolution: {integrity: sha512-3bNBDz/eiD/ROlLnZkgsxViZYRqXFlnkKTSZYVe0MDjeeWCNnFmQcFLOLAVqEdZ9H7g1eCmRuMc2jlihwquKUg==}
 
   matcher@3.0.0:
     resolution: {integrity: sha512-OkeDaAZ/bQCxeFAozM55PKcKU0yJMPGifLwV4Qgjitu+5MoAfSQN4lsLJeXZ1b8w0x+/Emda6MZgXS1jvsapng==}
@@ -489,6 +496,8 @@ snapshots:
       json-buffer: 3.0.1
 
   lowercase-keys@2.0.0: {}
+
+  lucide@1.12.0: {}
 
   matcher@3.0.0:
     dependencies:
