@@ -19,6 +19,7 @@ MAX_RESTARTS = 3
 
 
 def _coerce_int(value: Any, *, field_name: str) -> int:
+    # Accept int/float input from MCP payloads and normalize to int.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field_name} must be a number.")
     return int(value)
@@ -26,12 +27,16 @@ def _coerce_int(value: Any, *, field_name: str) -> int:
 
 class OverlayRuntime:
     """
-    Bridge runtime that communicates with the Electron overlay process over stdio.
+    Bridge runtime that communicates with the Electron overlay process.
+
+    Commands are sent over a Windows named pipe.
+    Events are received from the child process stdout as JSON lines.
     """
 
     def __init__(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         self._overlay_dir = repo_root / "overlay"
+        # Per-runtime unique pipe prevents collisions with stale processes.
         self._pipe_name = f"pupil-overlay-ipc-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self._pipe_path = rf"\\.\pipe\{self._pipe_name}"
         self._process: subprocess.Popen[str] | None = None
@@ -45,7 +50,7 @@ class OverlayRuntime:
         self._restart_attempts = 0
         self._logger = logging.getLogger(__name__)
 
-        # Overlay HWND is currently unavailable with the Electron bridge.
+        # Filled after bridge sends `ready` with native window handle.
         self._overlay_hwnd = 0
         atexit.register(self.stop)
 
@@ -54,6 +59,7 @@ class OverlayRuntime:
         return self._overlay_hwnd
 
     def normalize_indicator(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # Validate and normalize user payload before sending to the overlay bridge.
         if not isinstance(payload, dict):
             raise ValueError("indicator must be an object.")
 
@@ -95,6 +101,7 @@ class OverlayRuntime:
         return normalized
 
     def start(self, startup_timeout_s: float = DEFAULT_STARTUP_TIMEOUT_S) -> None:
+        # Start one overlay process and wait until renderer signals `ready`.
         with self._lock:
             if self._is_running():
                 return
@@ -127,6 +134,7 @@ class OverlayRuntime:
                 pass
 
     def indicate(self, indicator: dict[str, Any]) -> None:
+        # append=True keeps previous indicators, append=False replaces all.
         append = bool(indicator.get("append", False))
         with self._lock:
             self._ensure_running_locked()
@@ -154,6 +162,7 @@ class OverlayRuntime:
         env = os.environ.copy()
         # If inherited as "1", Electron behaves like plain Node and `app` is undefined.
         env.pop("ELECTRON_RUN_AS_NODE", None)
+        # Bridge listens for command envelopes on this pipe.
         env["PUPIL_OVERLAY_PIPE"] = self._pipe_path
         self._process = subprocess.Popen(
             [str(electron_exe), str(bridge_entry)],
@@ -176,6 +185,7 @@ class OverlayRuntime:
     def _ensure_running_locked(self) -> None:
         if self._is_running():
             return
+        # Lazily recover after crashes when a new command is sent.
         self._attempt_restart_locked()
 
     def _attempt_restart_locked(self) -> None:
@@ -196,10 +206,12 @@ class OverlayRuntime:
             "command": command,
             "payload": payload,
         }
+        # Command channel: JSONL over Windows named pipe.
         message_line = json.dumps(message) + "\n"
         self._write_pipe_line(message_line)
 
     def _write_pipe_line(self, line: str, retries: int = 20, retry_delay_s: float = 0.1) -> None:
+        # Retry briefly to absorb startup races before pipe server is ready.
         last_error: Exception | None = None
         for attempt in range(1, retries + 1):
             try:
@@ -213,6 +225,7 @@ class OverlayRuntime:
         raise RuntimeError(f"Failed to write to overlay pipe {self._pipe_path}: {last_error}")
 
     def _read_stdout_loop(self) -> None:
+        # Event channel: child stdout emits JSON event envelopes.
         process = self._process
         if process is None or process.stdout is None:
             return
@@ -250,6 +263,7 @@ class OverlayRuntime:
 
         event_name = event.get("event")
         if event_name == "ready":
+            # Bridge includes overlayHwnd so perceive() can exclude overlay window.
             payload = event.get("payload")
             if isinstance(payload, dict):
                 hwnd = payload.get("overlayHwnd")
@@ -264,6 +278,7 @@ class OverlayRuntime:
             self._logger.info("Overlay interaction event: %s", event.get("payload"))
 
     def _rehydrate_state(self) -> None:
+        # Replay current indicators after restart so UI state survives crashes.
         with self._lock:
             if not self._is_running():
                 return
