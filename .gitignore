@@ -42,6 +42,10 @@ pip-wheel-metadata/
 *.out
 *.err
 
+# Node artifacts
+node_modules/
+/package.json
+
 # Environment and local config
 .env
 .env.*
