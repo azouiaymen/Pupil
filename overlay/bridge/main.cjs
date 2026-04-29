@@ -20,6 +20,8 @@ let heartbeatWatchdog = null;
 const parentPid = Number.parseInt(process.env.PUPIL_PARENT_PID || '0', 10);
 const sessionId = process.env.PUPIL_OVERLAY_SESSION_ID || `session-${Date.now()}`;
 
+// Keep all Electron writable paths in a controlled temp root so this bridge can
+// run in constrained or ephemeral environments without polluting user profiles.
 function configureRuntimePaths() {
   const runtimeRoot = path.join(os.tmpdir(), 'pupil-overlay-electron');
   const userDataPath = path.join(runtimeRoot, 'user-data');
@@ -53,6 +55,7 @@ app.on('second-instance', (_event, commandLine, workingDirectory, additionalData
 });
 
 function getVirtualBounds() {
+  // The overlay spans the full virtual desktop; multi-monitor coordinates can be negative.
   const displays = screen.getAllDisplays();
   return displays.reduce(
     (acc, display) => ({
@@ -71,12 +74,14 @@ function getVirtualBounds() {
 }
 
 function writeEvent(event, payload = {}, requestId = null) {
+  // Event channel contract: JSONL envelope on stdout consumed by Python runtime.
   process.stdout.write(
     JSON.stringify({ protocolVersion: PROTOCOL_VERSION, sessionId, requestId, event, payload }) + '\n'
   );
 }
 
 function sendError(message, requestId = null) {
+  // Errors follow the same envelope shape so requestId correlation still works.
   writeEvent('error', { message }, requestId);
 }
 
@@ -104,6 +109,8 @@ function getOverlayHwnd() {
 }
 
 function createWindow() {
+  // The BrowserWindow origin/size are anchored to virtual desktop bounds so
+  // renderer coordinates can be remapped from absolute OS space consistently.
   const bounds = getVirtualBounds();
   virtualOrigin = { x: bounds.x, y: bounds.y };
   mainWindow = new BrowserWindow({
@@ -132,6 +139,8 @@ function createWindow() {
 }
 
 function setWindowInteractivity(active) {
+  // Interactivity is controlled centrally to guarantee a single source of truth
+  // between renderer intent and native click-through behavior.
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
@@ -145,6 +154,8 @@ function setWindowInteractivity(active) {
 }
 
 function remapToWindowSpace(commandEnvelope) {
+  // Only indicate commands carry OS-level target bounds that need remapping into
+  // window-local renderer space.
   if (commandEnvelope.command !== 'indicate') {
     return commandEnvelope;
   }
@@ -183,6 +194,8 @@ function dispatchToRenderer(commandEnvelope) {
     throw new Error('Overlay window is not available.');
   }
   if (!rendererReady) {
+    // Keep a bounded buffer before renderer ready; dropping oldest commands avoids
+    // unbounded memory growth if the renderer stalls during startup.
     if (pendingCommands.length >= MAX_PENDING_COMMANDS) {
       pendingCommands.shift();
       sendError(`pending_queue_overflow: dropped oldest command (max=${MAX_PENDING_COMMANDS})`, mappedCommand.requestId || null);
@@ -206,6 +219,7 @@ function isParentAlive(pid) {
 }
 
 function startHeartbeatWatchdog() {
+  // Fail closed: this overlay should not outlive its Python parent runtime.
   if (heartbeatWatchdog) {
     return;
   }
@@ -224,6 +238,7 @@ function startHeartbeatWatchdog() {
 }
 
 function flushPendingCommands() {
+  // FIFO replay preserves command ordering seen by the runtime while renderer booted.
   if (!rendererReady || !mainWindow || mainWindow.isDestroyed()) return;
   while (pendingCommands.length > 0) {
     const cmd = pendingCommands.shift();
@@ -233,6 +248,7 @@ function flushPendingCommands() {
 }
 
 function validateCommand(raw) {
+  // Protocol invariants prevent stale sessions or malformed clients from mutating UI state.
   if (!raw || typeof raw !== 'object') {
     throw new Error('Command must be an object.');
   }
@@ -274,6 +290,7 @@ function startPipeServer() {
 
       let newlineIdx = buffer.indexOf('\n');
       while (newlineIdx !== -1) {
+        // Pipe protocol uses newline-delimited JSON to allow incremental parsing.
         const rawLine = buffer.slice(0, newlineIdx);
         buffer = buffer.slice(newlineIdx + 1);
         const trimmed = rawLine.trim();
@@ -284,6 +301,7 @@ function startPipeServer() {
             parsed = JSON.parse(trimmed);
             envelope = validateCommand(parsed);
             if (envelope.command === 'shutdown') {
+              // Ack before quit so parent can complete graceful shutdown path.
               sendAck(envelope.requestId, { command: envelope.command });
               app.quit();
               continue;
@@ -319,6 +337,7 @@ function startPipeServer() {
 }
 
 app.on('ready', () => {
+  // Startup order matters: window first, command server second, watchdog last.
   createWindow();
   startPipeServer();
   startHeartbeatWatchdog();
@@ -351,6 +370,7 @@ ipcMain.on('overlay:event', (_event, envelope) => {
   }
   const requestId = typeof envelope.requestId === 'string' ? envelope.requestId : null;
   if (envelope.event === 'ready') {
+    // Include native handle in ready event so Python can ignore overlay window in capture.
     rendererReady = true;
     flushPendingCommands();
     const overlayHwnd = getOverlayHwnd();
@@ -360,6 +380,7 @@ ipcMain.on('overlay:event', (_event, envelope) => {
 });
 
 ipcMain.on('overlay:interactivity', (_event, payload) => {
+  // Renderer emits intent; native process enforces actual click-through mode.
   const nextActive = payload && typeof payload.active === 'boolean' ? payload.active : false;
   setWindowInteractivity(nextActive);
 });

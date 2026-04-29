@@ -1,0 +1,4 @@
+allowBuilds:
+  '[': false
+  ']': false
+allowedBuildDependencies: electron

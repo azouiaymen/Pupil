@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""
+Python/.NET bridge for PerceptionApi access.
+
+This module lazily initializes CoreCLR through pythonnet, loads the built
+`Pupil.Core.dll`, and exposes a small Python API that returns normalized Python
+data structures for MCP tool handlers.
+"""
+
 import json
 import threading
 from pathlib import Path
@@ -36,6 +44,7 @@ _DLL_PATH = (
 
 
 def _ensure_runtime() -> None:
+    """Initialize the CoreCLR runtime once per process in a thread-safe way."""
     global _RUNTIME_READY
     if _RUNTIME_READY:
         return
@@ -51,6 +60,7 @@ def _ensure_runtime() -> None:
 
 
 def _load_perceive_function():
+    """Load and cache `PerceptionApi.Perceive` from `Pupil.Core.dll`."""
     global _PERCEIVE_FN
     if _PERCEIVE_FN is not None:
         return _PERCEIVE_FN
@@ -78,6 +88,7 @@ def _load_perceive_function():
 
 
 def _coerce_output(payload: Any) -> list[dict[str, Any]]:
+    """Convert CLR return payload into a safe `list[dict]` shape."""
     if payload is None:
         return []
 
@@ -100,7 +111,12 @@ def _coerce_output(payload: Any) -> list[dict[str, Any]]:
 
 
 def perceive(overlay_hwnd: int = 0) -> list[dict[str, Any]]:
-    """Call PerceptionApi.Perceive and return parsed node list."""
+    """
+    Call `PerceptionApi.Perceive` and return a normalized node list.
+
+    `overlay_hwnd` allows the native layer to exclude the overlay window from
+    perception results to reduce self-capture artifacts.
+    """
     if not isinstance(overlay_hwnd, int):
         raise PerceiveCallError("overlay_hwnd must be an integer.")
 
@@ -114,7 +130,7 @@ def perceive(overlay_hwnd: int = 0) -> list[dict[str, Any]]:
 
 
 def status() -> dict[str, Any]:
-    """Minimal internal diagnostics for startup checks/logging."""
+    """Return lightweight bridge diagnostics used by startup checks/logging."""
     return {
         "runtime_ready": _RUNTIME_READY,
         "dll_path": str(_DLL_PATH),

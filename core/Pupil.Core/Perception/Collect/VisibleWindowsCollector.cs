@@ -3,12 +3,19 @@ namespace Pupil.Core;
 // Enumerates visible desktop windows and collects cached UIA nodes from regions that are still visible on screen.
 internal static class VisibleWindowsCollector
 {
+    /// <summary>
+    /// Collect raw UIA nodes from top-most windows that still have meaningful visible area.
+    /// </summary>
+    /// <remarks>
+    /// The collector approximates occlusion by subtracting already-kept front windows from
+    /// each subsequent window before traversing its cached UIA subtree.
+    /// </remarks>
     internal static (List<RawNode> raw, HashSet<string> windowTitles, int considered, int scanned) CollectRawVisibleWindows(
         int sw,
         int sh,
         nint excludeHwnd = 0,
-        int maxWindows = 6,
-        double minVisibleRatio = 0.02)
+        int maxWindows = PerceptionConstants.MaxWindows,
+        double minVisibleRatio = PerceptionConstants.MinVisibleRatio)
     {
         // Build one cache request reused for every selected top-level window.
         var (automation, cacheRequest) = UiaCache.BuildCacheRequest();
@@ -24,9 +31,11 @@ internal static class VisibleWindowsCollector
         {
             try
             {
+                // Build cache-backed root so child traversal avoids uncached live UIA queries.
                 var root = automation.ElementFromHandleBuildCache(hwnd, cacheRequest);
                 scanned++;
                 UiaCache.WalkCached(root, raw, visibleRegions);
+                // Keep top-level titles to suppress duplicated non-text noise later in post-processing.
                 var title = root.CachedName ?? string.Empty;
                 if (!string.IsNullOrWhiteSpace(title))
                 {
@@ -42,11 +51,15 @@ internal static class VisibleWindowsCollector
         return (raw, titles, hwnds.Count, scanned);
     }
 
+    /// <summary>
+    /// Enumerate visible non-minimized top-level windows in front-to-back z-order.
+    /// </summary>
     private static List<nint> EnumerateVisibleWindowsZOrder(int sw, int sh, nint excludeHwnd)
     {
         var windows = new List<nint>();
         NativeMethods.EnumWindows((hwnd, _) =>
         {
+            // Explicitly skip caller-provided overlay/tool window to avoid self-capture.
             if (excludeHwnd != 0 && hwnd == excludeHwnd)
             {
                 return true;
@@ -72,6 +85,9 @@ internal static class VisibleWindowsCollector
         return windows;
     }
 
+    /// <summary>
+    /// Read and clip a window rectangle against current screen bounds.
+    /// </summary>
     private static RectI? WindowRect(nint hwnd, int sw, int sh)
     {
         if (!NativeMethods.GetWindowRect(hwnd, out var rect))
@@ -84,6 +100,9 @@ internal static class VisibleWindowsCollector
             new RectI(0, 0, sw, sh));
     }
 
+    /// <summary>
+    /// Estimate visible regions for each window after subtracting front-window occlusion.
+    /// </summary>
     private static List<(nint hwnd, List<RectI> visibleRegions, RectI rect)> ComputeVisibleWindowRegions(
         List<nint> hwndsFrontToBack,
         int sw,
@@ -109,6 +128,7 @@ internal static class VisibleWindowsCollector
             {
                 continue;
             }
+            // Use visible-ratio threshold to skip windows mostly hidden behind foreground layers.
             var ratio = (double)visibleArea / totalArea;
             if (visibleArea <= 0 || ratio < minVisibleRatio)
             {

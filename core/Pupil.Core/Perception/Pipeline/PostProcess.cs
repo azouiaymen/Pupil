@@ -3,6 +3,9 @@ namespace Pupil.Core;
 // Heuristic cleanup pass that turns raw UIA nodes into a stable, low-noise output set.
 internal static class PostProcess
 {
+    /// <summary>
+    /// Non-maximum suppression for overlapping nodes with interactive-first priority.
+    /// </summary>
     internal static List<RawNode> Nms(List<RawNode> raw)
     {
         // Process interactive controls first so they are more likely to survive overlap suppression.
@@ -36,6 +39,9 @@ internal static class PostProcess
         return results;
     }
 
+    /// <summary>
+    /// Merge consecutive text nodes on the same baseline into single labels.
+    /// </summary>
     internal static List<RawNode> MergeTextNodes(List<RawNode> results)
     {
         // Join horizontally adjacent text fragments on the same line into single readable labels.
@@ -78,6 +84,9 @@ internal static class PostProcess
         return merged;
     }
 
+    /// <summary>
+    /// Filter tiny nodes and known low-signal artifacts from the output set.
+    /// </summary>
     internal static List<RawNode> FilterNoise(List<RawNode> results, HashSet<string> windowTitles)
     {
         // Drop tiny/noisy controls and non-text nodes that duplicate top-level window titles.
@@ -88,6 +97,9 @@ internal static class PostProcess
             (el.Type == "TextControl" || !windowTitles.Contains(el.Name))).ToList();
     }
 
+    /// <summary>
+    /// Build a strict containment tree from flat rectangles to derive structural leaves.
+    /// </summary>
     internal static TreeNode BuildContainmentTree(List<RawNode> results, int sw, int sh)
     {
         // Create a synthetic root and assign each node to the smallest strict containing parent.
@@ -124,8 +136,10 @@ internal static class PostProcess
                 }
                 if (cx1 == nx1 && cy1 == ny1 && cx2 == nx2 && cy2 == ny2)
                 {
+                    // Ignore exact-duplicate rectangles to avoid unstable parent chains.
                     continue;
                 }
+                // Keep the smallest containing candidate to build the tightest containment tree.
                 bestParent = candidate;
                 bestArea = cArea;
             }
@@ -136,6 +150,9 @@ internal static class PostProcess
         return root;
     }
 
+    /// <summary>
+    /// Extract terminal nodes that best represent actionable or atomic UI elements.
+    /// </summary>
     internal static List<RawNode> ExtractLeaves(TreeNode root)
     {
         // Keep interactive leaves (or non-interactive terminal nodes) for concise final output.
@@ -174,6 +191,7 @@ internal static class PostProcess
                 }
                 else if (node.Data.Desc == 0)
                 {
+                    // Preserve terminal non-interactive leaves (e.g., standalone text labels).
                     output.Add(node.Data);
                 }
             }
@@ -184,6 +202,9 @@ internal static class PostProcess
         }
     }
 
+    /// <summary>
+    /// Recursively sort children by top-to-bottom then left-to-right layout order.
+    /// </summary>
     private static void SortTree(TreeNode node)
     {
         node.Children.Sort((a, b) =>

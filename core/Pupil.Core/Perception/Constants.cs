@@ -6,6 +6,8 @@ internal static class PerceptionConstants
     // Overlap threshold used by NMS to suppress near-duplicate nodes.
     internal const double IouThreshold = 0.90;
     internal const int TreeScopeSubtree = 7;
+    internal const int MaxWindows = 12;
+    internal const double MinVisibleRatio = 0.02;
 
     // UIAutomation property IDs cached during traversal.
     internal const int PropBoundingRect = 30001;

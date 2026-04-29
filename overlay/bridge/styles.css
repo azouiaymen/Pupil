@@ -3,6 +3,7 @@
   font-family: Inter, "Segoe UI", Arial, sans-serif;
 }
 
+/* Global overlay layer is transparent and non-interactive by default. */
 html, body, #overlay-root {
   width: 100%;
   height: 100%;
@@ -13,6 +14,7 @@ html, body, #overlay-root {
 }
 
 .indicator-bbox {
+  /* Target highlight box around the indicated UI region. */
   position: absolute;
   border-radius: 10px;
   border: 2px solid;
@@ -22,6 +24,7 @@ html, body, #overlay-root {
 }
 
 .indicator-connector {
+  /* Connector layer visually links floating cards to their target bounds. */
   position: absolute;
   left: 0;
   top: 0;
@@ -47,6 +50,7 @@ html, body, #overlay-root {
 }
 
 .indicator-card {
+  /* Card width is coupled with renderer clamp math (see applyCardPosition). */
   position: absolute;
   width: 320px;
   min-height: 70px;
@@ -85,6 +89,7 @@ html, body, #overlay-root {
 }
 
 .indicator-close {
+  /* Explicitly interactive even when parent overlay remains mostly pass-through. */
   border: 0;
   background: transparent;
   color: rgba(255, 255, 255, 0.74);
@@ -115,6 +120,7 @@ html, body, #overlay-root {
 }
 
 .indicator-actions {
+  /* Await-mode controls live in a fixed footer layout for predictable click targets. */
   margin-top: 12px;
   display: flex;
   justify-content: flex-end;
@@ -138,10 +144,12 @@ html, body, #overlay-root {
 }
 
 .indicator-action-btn-done {
+  /* Done action inherits current indicator type color for semantic continuity. */
   border-color: color-mix(in srgb, currentColor 45%, rgba(255, 255, 255, 0.2));
   background: color-mix(in srgb, currentColor 20%, rgba(255, 255, 255, 0.05));
 }
 
+/* Type color tokens must stay aligned with runtime indicator type definitions. */
 .indicator-info { color: #c9cdd4; }
 .indicator-warning { color: #ff5f66; }
 .indicator-wait { color: #8ed8ff; }

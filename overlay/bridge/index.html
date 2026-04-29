@@ -6,8 +6,11 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <!-- Renderer owns all dynamic DOM; root stays minimal and absolute-positioned. -->
     <main id="overlay-root"></main>
+    <!-- Lucide must be loaded before renderer.js so icon lookups succeed on first render. -->
     <script src="../node_modules/lucide/dist/umd/lucide.js"></script>
+    <!-- Renderer bootstraps protocol handlers and emits initial `ready` event. -->
     <script src="./renderer.js"></script>
   </body>
 </html>

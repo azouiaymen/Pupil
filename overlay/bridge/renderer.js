@@ -3,6 +3,7 @@ const overlayRoot = document.getElementById('overlay-root');
 const indicators = [];
 let indicatorSequence = 0;
 let interactiveState = false;
+// Shared geometry constants used by both card placement and connector routing.
 const BOUNDS_PADDING_PX = 4;
 const CARD_GAP_PX = 24;
 const TOOLTIP_ESTIMATED_HEIGHT_PX = 132;
@@ -17,6 +18,7 @@ const TYPE_META = {
 };
 
 function typeClass(type) {
+  // CSS type classes intentionally mirror indicator type values from the protocol.
   return `indicator-${type}`;
 }
 
@@ -35,6 +37,7 @@ function createIcon(iconName) {
 }
 
 function closeIndicator(indicatorId) {
+  // Closing an await=true indicator resolves as skipped to unblock waiting callers.
   const index = indicators.findIndex((item) => item._id === indicatorId);
   if (index === -1) {
     return;
@@ -55,6 +58,7 @@ function closeIndicator(indicatorId) {
 }
 
 function resolveIndicator(indicatorId, result) {
+  // Explicit action buttons send terminal outcomes expected by Python waiters.
   const index = indicators.findIndex((item) => item._id === indicatorId);
   if (index === -1) {
     return;
@@ -73,6 +77,7 @@ function resolveIndicator(indicatorId, result) {
 }
 
 function syncInteractivity(nextState) {
+  // Avoid redundant IPC traffic by only sending transitions.
   const active = Boolean(nextState);
   if (interactiveState === active) {
     return;
@@ -82,10 +87,12 @@ function syncInteractivity(nextState) {
 }
 
 function shouldBeInteractive(target) {
+  // Overlay should be clickable only when cursor is over a rendered indicator card.
   return Boolean(target && target.closest && target.closest('.indicator-card'));
 }
 
 function applyCardPosition(card, indicator, preferredTopBase, fallbackTopBase, leftBase) {
+  // Clamp cards into viewport so drag and close actions remain reachable.
   const maxLeft = window.innerWidth - 340;
   const maxTop = window.innerHeight - 140;
   const left = indicator._position ? indicator._position.left : leftBase;
@@ -99,6 +106,7 @@ function applyCardPosition(card, indicator, preferredTopBase, fallbackTopBase, l
 }
 
 function createConnector(indicator, card) {
+  // Connectors visually tie floating cards to the highlighted target bounds.
   if (!indicator.bounds) {
     return null;
   }
@@ -132,6 +140,7 @@ function createConnector(indicator, card) {
 }
 
 function updateConnector(connector, indicator, card) {
+  // Connector path is recomputed from live card geometry (drag + resize aware).
   if (!connector || !indicator.bounds) {
     return;
   }
@@ -170,6 +179,7 @@ function updateConnector(connector, indicator, card) {
 }
 
 function bindCardDrag(card, closeButton, indicator, connector) {
+  // Dragging is disabled on action controls to avoid conflicting click semantics.
   let dragging = false;
   let offsetX = 0;
   let offsetY = 0;
@@ -216,6 +226,7 @@ function bindCardDrag(card, closeButton, indicator, connector) {
 }
 
 function render() {
+  // Full rerender keeps state transitions simple; indicators list is source of truth.
   overlayRoot.innerHTML = '';
   for (const indicator of indicators) {
     const card = document.createElement('section');
@@ -274,6 +285,7 @@ function render() {
     }
 
     if (indicator.await) {
+      // Await mode exposes explicit terminal actions for command-side synchronization.
       const actions = document.createElement('div');
       actions.className = 'indicator-actions';
 
@@ -306,6 +318,7 @@ function render() {
 window.overlayApi.onCommand((message) => {
   const requestId = typeof message.requestId === 'string' ? message.requestId : undefined;
   try {
+    // Protocol guardrail: reject commands from mismatched runtime versions.
     if (message.protocolVersion !== PROTOCOL_VERSION) {
       window.overlayApi.sendEvent({
         protocolVersion: PROTOCOL_VERSION,
@@ -321,6 +334,7 @@ window.overlayApi.onCommand((message) => {
       return;
     }
     if (message.command === 'ping') {
+      // Ping/pong keeps liveness visible to the heartbeat watchdog upstream.
       window.overlayApi.sendEvent({
         protocolVersion: PROTOCOL_VERSION,
         event: 'interaction',
@@ -338,6 +352,7 @@ window.overlayApi.onCommand((message) => {
       return;
     }
   } catch (error) {
+    // Command failures are surfaced with requestId so runtime can map the error.
     window.overlayApi.sendEvent({
       protocolVersion: PROTOCOL_VERSION,
       requestId,
@@ -348,6 +363,7 @@ window.overlayApi.onCommand((message) => {
 });
 
 window.overlayApi.sendEvent({
+  // Handshake event signals renderer availability to flush queued commands.
   protocolVersion: PROTOCOL_VERSION,
   event: 'ready',
   payload: {},

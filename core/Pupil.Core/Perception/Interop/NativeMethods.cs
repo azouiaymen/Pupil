@@ -5,6 +5,9 @@ namespace Pupil.Core;
 // Minimal Win32 interop surface used for screen and top-level window enumeration.
 internal static class NativeMethods
 {
+    /// <summary>
+    /// Callback signature used by EnumWindows for top-level window enumeration.
+    /// </summary>
     internal delegate bool EnumWindowsProc(nint hWnd, nint lParam);
 
     [StructLayout(LayoutKind.Sequential)]
@@ -31,6 +34,9 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern bool GetWindowRect(nint hWnd, out RECT rect);
 
+    /// <summary>
+    /// Get primary screen width/height through Win32 system metrics.
+    /// </summary>
     // SM_CXSCREEN (0), SM_CYSCREEN (1).
     internal static (int sw, int sh) ScreenSize() => (GetSystemMetrics(0), GetSystemMetrics(1));
 }

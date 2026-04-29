@@ -1,0 +1,30 @@
+{
+  "name": "pupil-mcp",
+  "version": "0.1.0",
+  "description": "Pupil MCP shim and Electron overlay daemon",
+  "scripts": {
+    "start": "node src/shim/index.js",
+    "daemon": "electron src/daemon/main.cjs",
+    "check": "node --check src/shim/index.js"
+  },
+  "license": "MIT",
+  "packageManager": "pnpm@10.32.1",
+  "type": "commonjs",
+  "bin": {
+    "pupil-mcp": "bin/pupil-mcp.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "electron": "^41.3.0",
+    "lucide": "^1.14.0",
+    "zod": "^4.3.6"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron"
+    ]
+  }
+}

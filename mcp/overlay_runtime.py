@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+"""
+Overlay runtime coordinator for the Electron bridge process.
+
+This module owns the Python-side lifecycle for the overlay window and exposes a
+command/event bridge based on:
+- commands written as JSON lines to a Windows named pipe
+- events read as JSON lines from the child stdout stream
+
+The runtime is intentionally defensive: it validates payloads before dispatch,
+tracks request-level acknowledgements, and attempts bounded restarts so callers
+can keep using the same API after transient overlay failures.
+"""
+
 import atexit
 import json
 import logging
@@ -24,6 +37,7 @@ READY_WAIT_AFTER_RESTART_S = 2.0
 
 
 def _coerce_int(value: Any, *, field_name: str) -> int:
+    """Coerce numeric payload values to int with explicit field context."""
     # Accept int/float input from MCP payloads and normalize to int.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field_name} must be a number.")
@@ -75,9 +89,11 @@ class OverlayRuntime:
         return self._state
 
     def _set_state(self, next_state: str) -> None:
+        """Centralize state transitions for easier runtime diagnostics."""
         self._state = next_state
 
     def warn_if_overlay_hwnd_unset(self) -> None:
+        """Emit a one-time warning when callers use perceive before ready handshake."""
         # Helps diagnose perceive() calls that happen before ready/handshake completes.
         if self._overlay_hwnd > 0:
             self._overlay_hwnd_warning_logged = False
@@ -88,6 +104,7 @@ class OverlayRuntime:
         self._overlay_hwnd_warning_logged = True
 
     def normalize_indicator(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Validate and normalize raw indicator payload into bridge-safe shape."""
         # Validate and normalize user payload before sending to the overlay bridge.
         if not isinstance(payload, dict):
             raise ValueError("indicator must be an object.")
@@ -141,6 +158,12 @@ class OverlayRuntime:
         return normalized
 
     def start(self, startup_timeout_s: float = DEFAULT_STARTUP_TIMEOUT_S) -> None:
+        """
+        Start the overlay process and block until the renderer reports readiness.
+
+        The startup sequence waits for a `ready` event and then performs a ping
+        command to verify that both command and event channels are responsive.
+        """
         # Start one overlay process and wait until renderer signals `ready`.
         with self._lock:
             if self._is_running():
@@ -161,6 +184,12 @@ class OverlayRuntime:
         self._set_state("active")
 
     def stop(self) -> None:
+        """
+        Stop the overlay process and clear transient runtime coordination state.
+
+        A best-effort graceful shutdown command is sent first, then the process is
+        terminated/killed if necessary to avoid hanging the caller during teardown.
+        """
         self._stop_requested.set()
         self._set_state("stopping")
         with self._lock:
@@ -189,6 +218,12 @@ class OverlayRuntime:
         self._set_state("stopped")
 
     def indicate(self, indicator: dict[str, Any]) -> str | None:
+        """
+        Send an indicator command and optionally wait for user resolution.
+
+        Returns:
+            None when await mode is disabled, otherwise `done` or `skipped`.
+        """
         # append=True keeps previous indicators, append=False replaces all.
         if "id" not in indicator:
             indicator["id"] = f"ind-{uuid.uuid4().hex[:10]}"
@@ -210,6 +245,7 @@ class OverlayRuntime:
         return self._wait_for_indicator_resolution(indicator_id, timeout_s=AWAIT_RESULT_TIMEOUT_S)
 
     def _wait_for_indicator_resolution(self, indicator_id: str, timeout_s: float) -> str:
+        """Wait for an interaction event that resolves the given indicator id."""
         started = time.time()
         waiter = queue.Queue[str]()
         with self._lock:
@@ -228,6 +264,12 @@ class OverlayRuntime:
                 self._indicator_waiters.pop(indicator_id, None)
 
     def _spawn_process_locked(self) -> None:
+        """
+        Spawn Electron bridge process and wire stdout/stderr reader threads.
+
+        Caller must hold `_lock` so process generation and thread references remain
+        internally consistent while startup state is replaced.
+        """
         if not self._overlay_dir.exists():
             raise RuntimeError(f"Overlay app not found at {self._overlay_dir}.")
         electron_exe = self._overlay_dir / "node_modules" / "electron" / "dist" / "electron.exe"
@@ -264,6 +306,7 @@ class OverlayRuntime:
         self._process_generation += 1
 
     def _start_heartbeat_thread(self) -> None:
+        """Start a single heartbeat worker that keeps parent/child liveness linked."""
         thread = self._heartbeat_thread
         if thread is not None and thread.is_alive():
             return
@@ -282,15 +325,23 @@ class OverlayRuntime:
             time.sleep(HEARTBEAT_INTERVAL_S)
 
     def _is_running(self) -> bool:
+        """Return True when a child process exists and has not exited."""
         return self._process is not None and self._process.poll() is None
 
     def _ensure_running_locked(self) -> None:
+        """Ensure a usable child process exists, restarting lazily if needed."""
         if self._is_running():
             return
         # Lazily recover after crashes when a new command is sent.
         self._attempt_restart_locked()
 
     def _attempt_restart_locked(self) -> None:
+        """
+        Attempt a bounded restart after unexpected child termination.
+
+        Restart attempts are capped to prevent infinite crash loops that would
+        otherwise hide persistent bridge failures from callers.
+        """
         if self._restart_in_progress:
             raise RuntimeError("Overlay restart already in progress.")
         if self._stop_requested.is_set():
@@ -316,6 +367,12 @@ class OverlayRuntime:
         wait_ack: bool = True,
         timeout_s: float = COMMAND_ACK_TIMEOUT_S,
     ) -> None:
+        """
+        Send one command envelope and optionally wait for matching ack/error event.
+
+        The command channel is write-only JSONL over named pipe; response matching
+        is done by correlating `requestId` with `_pending_acks`.
+        """
         process = self._process
         if process is None or process.poll() is not None:
             raise RuntimeError("Overlay process is not running.")
@@ -352,6 +409,7 @@ class OverlayRuntime:
             self._pending_acks.pop(request_id, None)
 
     def _write_pipe_line(self, line: str, retries: int = 20, retry_delay_s: float = 0.1) -> None:
+        """Write one JSONL command to the pipe with short retries for startup races."""
         # Retry briefly to absorb startup races before pipe server is ready.
         last_error: Exception | None = None
         for attempt in range(1, retries + 1):
@@ -366,6 +424,7 @@ class OverlayRuntime:
         raise RuntimeError(f"Failed to write to overlay pipe {self._pipe_path}: {last_error}")
 
     def _read_stdout_loop(self) -> None:
+        """Continuously parse child stdout JSON events until process exits."""
         # Event channel: child stdout emits JSON event envelopes.
         process = self._process
         if process is None or process.stdout is None:
@@ -388,6 +447,7 @@ class OverlayRuntime:
             self._handle_process_exit(process)
 
     def _read_stderr_loop(self) -> None:
+        """Forward child stderr lines to Python logger for bridge debugging."""
         process = self._process
         if process is None or process.stderr is None:
             return
@@ -397,6 +457,12 @@ class OverlayRuntime:
                 self._logger.info("overlay stderr: %s", text)
 
     def _handle_event(self, event: dict[str, Any]) -> None:
+        """
+        Route one overlay event envelope to ack waiters and runtime state handlers.
+
+        Event handling enforces protocol/session checks first so stale events from
+        previous process generations do not mutate current runtime state.
+        """
         if event.get("protocolVersion") != PROTOCOL_VERSION:
             self._logger.warning("Ignoring overlay event with incompatible protocol: %s", event)
             return
@@ -441,6 +507,7 @@ class OverlayRuntime:
                 if payload.get("type") == "pong":
                     return
                 if payload.get("type") == "indicator_resolved" and isinstance(indicator_id, str):
+                    # Await mode only resolves for explicit terminal outcomes.
                     result = payload.get("result")
                     if result in {"done", "skipped"}:
                         waiter = self._indicator_waiters.get(indicator_id)
@@ -452,6 +519,7 @@ class OverlayRuntime:
             self._logger.debug("Overlay interaction event: %s", payload)
 
     def _rehydrate_state(self) -> None:
+        """Replay active indicators after restart so visible state survives crashes."""
         # Replay current indicators after restart so UI state survives crashes.
         with self._lock:
             if not self._is_running():
@@ -464,6 +532,12 @@ class OverlayRuntime:
                 self._logger.warning("Failed to rehydrate overlay state: %s", exc)
 
     def _handle_process_exit(self, exited_process: subprocess.Popen[str]) -> None:
+        """
+        Handle unexpected child exit and trigger bounded restart/recovery flow.
+
+        This path is intentionally conservative: if restart fails, callers receive
+        errors on subsequent commands instead of silently operating in degraded mode.
+        """
         with self._lock:
             process = self._process
             if process is None:

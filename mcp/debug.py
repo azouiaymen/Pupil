@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""
+Standalone visual debugger for PerceptionApi output.
+
+This tool continuously calls the native perception pipeline and paints detected
+rectangles on a transparent top-most Qt overlay, helping validate coordinate
+mapping, node density, and capture latency in real time.
+"""
+
 import json
 import signal
 import sys
@@ -49,17 +57,21 @@ class Scanner(QObject):
         self._loop_idx = 0
 
     def start(self) -> None:
+        """Start the polling loop by scheduling the first background iteration."""
         self._running = True
         self._schedule()
 
     def stop(self) -> None:
+        """Stop scheduling additional scan iterations."""
         self._running = False
 
     def _schedule(self) -> None:
+        """Queue one async scan iteration while the scanner remains active."""
         if self._running:
             threading.Thread(target=self._run_once, daemon=True).start()
 
     def _run_once(self) -> None:
+        """Execute one perceive call, parse payload, and emit normalized elements."""
         self._loop_idx += 1
         t0 = time.perf_counter()
         payload = self._perceive(self._overlay_hwnd)
@@ -113,10 +125,12 @@ class Overlay(QWidget):
             self._scale = 1.0
 
     def set_elements(self, elements: list[dict]) -> None:
+        """Replace current draw list and trigger immediate repaint."""
         self.elements = elements
         self.update()
 
     def paintEvent(self, _event):
+        """Render detection rectangles using translucent fills and type-based outlines."""
         if not self.elements:
             return
 
@@ -145,6 +159,7 @@ class Overlay(QWidget):
 
 
 def _ensure_dll() -> None:
+    """Fail fast with clear guidance when the built core DLL is missing."""
     if not _DLL.is_file():
         print(f"DLL not found: {_DLL}", file=sys.stderr)
         print(r"Build first: .\scripts\build-core.ps1", file=sys.stderr)
@@ -152,6 +167,12 @@ def _ensure_dll() -> None:
 
 
 def main() -> None:
+    """
+    Bootstrap CLR + Qt event loop and stream perception frames into overlay paint.
+
+    The scan loop is intentionally self-scheduled through Qt signal callbacks to
+    keep UI updates on the main thread while perception runs in worker threads.
+    """
     _ensure_dll()
     clr.AddReference(str(_DLL.resolve()))
     from Pupil.Core import PerceptionApi  # noqa: PLC0415

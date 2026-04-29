@@ -14,5 +14,8 @@ internal static class JsonOutput
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
     };
 
+    /// <summary>
+    /// Serialize normalized output nodes using stable API options.
+    /// </summary>
     internal static string Serialize(List<OutputNode> nodes) => JsonSerializer.Serialize(nodes, Options);
 }

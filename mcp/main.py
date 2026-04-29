@@ -22,6 +22,7 @@ _instance_lock_file: Any | None = None
 
 
 def _pid_exists(pid: int) -> bool:
+    """Return True when a process id is still alive or access-restricted."""
     if pid <= 0:
         return False
     try:
@@ -36,6 +37,12 @@ def _pid_exists(pid: int) -> bool:
 
 
 def _start_parent_watchdog() -> None:
+    """
+    Optionally stop this MCP runtime when its original parent process disappears.
+
+    This guards against orphaned MCP workers that can keep stale overlay processes
+    alive and create duplicate servers across reconnects.
+    """
     if not _ENABLE_PARENT_WATCHDOG:
         return
     parent_pid = os.getppid()
@@ -60,6 +67,7 @@ def _start_parent_watchdog() -> None:
 
 
 def _acquire_single_instance_lock() -> None:
+    """Acquire a non-blocking process lock so only one MCP server instance runs."""
     # Prevent multiple MCP servers from running concurrently (common zombie multiplier).
     global _instance_lock_file
     _LOCK_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -84,6 +92,7 @@ def _acquire_single_instance_lock() -> None:
 
 
 def _release_single_instance_lock() -> None:
+    """Release lock file handle and clear in-memory lock reference."""
     global _instance_lock_file
     if _instance_lock_file is None:
         return
@@ -99,6 +108,7 @@ def _release_single_instance_lock() -> None:
 
 
 def _looks_like_shell_only(nodes: list[dict[str, Any]]) -> bool:
+    """Heuristic to detect shell/desktop-only captures from perceive output."""
     if not nodes:
         return False
     shell_markers = {"shell", "taskbar", "desktop", "start", "windows shell experience host"}
@@ -121,6 +131,9 @@ def perceive_mcp(overlay_hwnd: int = 0, include_diagnostics: bool = False) -> li
 
     `overlay_hwnd` defaults to the current runtime overlay handle when 0.
     `include_diagnostics` appends one diagnostic entry at the end of results.
+
+    The runtime overlay handle is injected to avoid perceiving our own overlay UI
+    in foreground captures, but callers can override it for explicit scenarios.
     """
     try:
         from bridge import DllNotFoundError, PerceiveCallError, RuntimeInitError, perceive
@@ -227,6 +240,7 @@ def indicate(indicator: dict[str, Any]) -> dict:
 
 
 def main() -> None:
+    """Boot MCP runtime, initialize overlay bridge, and serve tools until shutdown."""
     _acquire_single_instance_lock()
     _start_parent_watchdog()
     overlay_runtime.start()

@@ -3,6 +3,9 @@ namespace Pupil.Core;
 // Rectangle helpers used for clipping, occlusion subtraction, and overlap scoring.
 internal static class Geometry
 {
+    /// <summary>
+    /// Clip a rectangle to the best intersecting visible region.
+    /// </summary>
     internal static (int x, int y, int w, int h) ClipRectToRegions(int x, int y, int w, int h, List<RectI> regions)
     {
         // Keep the largest intersection so each node maps to a single visible fragment.
@@ -31,6 +34,9 @@ internal static class Geometry
         return (b.Left, b.Top, b.Right - b.Left, b.Bottom - b.Top);
     }
 
+    /// <summary>
+    /// Subtract many occluder rectangles from a base rectangle.
+    /// </summary>
     internal static List<RectI> SubtractMany(RectI @base, List<RectI> cuts)
     {
         // Iteratively carve out occluded areas; output may contain multiple visible fragments.
@@ -51,11 +57,15 @@ internal static class Geometry
         return fragments;
     }
 
+    /// <summary>
+    /// Subtract one cut rectangle from a base rectangle and return remaining fragments.
+    /// </summary>
     internal static List<RectI> SubtractRect(RectI @base, RectI cut)
     {
         var inter = RectIntersection(@base, cut);
         if (inter is null)
         {
+            // No overlap: base rectangle survives unchanged.
             return [@base];
         }
 
@@ -63,6 +73,7 @@ internal static class Geometry
         var i = inter.Value;
         var outRects = new List<RectI>();
         // Split into up to four axis-aligned bands around the intersection.
+        // This keeps subtraction deterministic and avoids polygon math for rectangular UI bounds.
         if (b.Top < i.Top)
         {
             outRects.Add(new RectI(b.Left, b.Top, b.Right, i.Top));
@@ -82,6 +93,9 @@ internal static class Geometry
         return outRects.Where(r => RectArea(r) > 0).ToList();
     }
 
+    /// <summary>
+    /// Return the intersection of two rectangles, or null when they do not overlap.
+    /// </summary>
     internal static RectI? RectIntersection(RectI a, RectI b)
     {
         var left = Math.Max(a.Left, b.Left);
@@ -91,8 +105,14 @@ internal static class Geometry
         return right <= left || bottom <= top ? null : new RectI(left, top, right, bottom);
     }
 
+    /// <summary>
+    /// Compute non-negative rectangle area.
+    /// </summary>
     internal static int RectArea(RectI rect) => Math.Max(0, rect.Right - rect.Left) * Math.Max(0, rect.Bottom - rect.Top);
 
+    /// <summary>
+    /// Compute intersection-over-union for overlap suppression heuristics.
+    /// </summary>
     internal static double Iou(RectOut a, RectOut b)
     {
         // Intersection-over-union for de-duplicating near-identical bounding boxes.
