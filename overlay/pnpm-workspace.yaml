@@ -1,4 +1,0 @@
-allowBuilds:
-  electron: true
-ignoreScripts: false
-nodeLinker: hoisted
