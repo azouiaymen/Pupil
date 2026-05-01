@@ -74,6 +74,15 @@ const indicatorShape = {
   text: z.string().optional(),
   append: z.boolean().optional(),
   await: z.boolean().optional(),
+  // Used by type='type': literal text the daemon should send via SendInput
+  // after focusing the bounding-box center.
+  value: z.string().optional(),
+  // Used by type='shortcut': a list of chord steps. Each chord is an array of
+  // nut-js Key enum names pressed in order, released in reverse. Steps are
+  // executed sequentially with a fixed ~50ms delay between them, so combos
+  // like [["LeftControl","A"],["Backspace"]] (select-all then delete) run
+  // atomically inside one Accept.
+  keys: z.array(z.array(z.string().min(1)).min(1)).min(1).optional(),
   id: z.string().min(1).optional(),
 };
 
@@ -124,14 +133,24 @@ async function main() {
         'Type semantics:',
         '- click: next required step is a mouse click on a specific target.',
         '- action: generic high-level action that is NOT an immediate click.',
-        '- type: user/agent must type text.',
+        '- type: user/agent must type text. Provide it via the `value` field.',
+        '- shortcut: press one or more keyboard chords in sequence. Provide `keys` as an array of chord steps; each chord is an array of nut-js Key names with modifiers first and the trigger last (e.g. [["LeftControl","A"],["Backspace"]] for select-all then delete). Steps run with a ~50ms delay between them.',
         '- wait: user/agent should wait for loading or async completion.',
         '- warning: risk, irreversible, or potentially destructive operation.',
+        '- danger: severe / stop — destructive or safety-critical; highest urgency.',
         '- info: neutral guidance or context.',
-        'Await behavior:',
-        '- await=false (default): fire-and-forget; result is null.',
-        '- await=true: blocking; tooltip exposes Skip/Done buttons; result is "done" or "skipped".',
-        '- Closing the indicator (X) acts like Skip when await=true.',
+        'Buttons (always shown, bottom-right of card):',
+        '- info / warning / wait / action / danger: a single "Next" button (Tab key shortcut). Resolves "done"; performs no OS action.',
+        '- click: "Skip" + "Accept". Accept performs an OS-level left click at the bounding-box center, then resolves "done". Skip resolves "skipped" without any input.',
+        '- type: "Skip" + "Accept". Accept clicks the bounding-box center to focus the field, then types the `value` string, then resolves "done".',
+        '- shortcut: "Skip" + "Accept". Accept clicks the bounding-box center (when bounds provided) to focus, then runs each chord step in `keys` in order (with a small delay between steps), then resolves "done". Without bounds, the chord sequence is sent to whatever is currently focused.',
+        '- The X (close) button resolves "skipped" and removes the card.',
+        'Lifecycle:',
+        '- await defaults to true; the call blocks until the user resolves via the buttons or X.',
+        '- After Next/Accept fires the resolution, the card stays visible with a loading spinner until the next indicate(append=false) (or hideAll) clears it.',
+        '- append=false (default) replaces all current indicators; append=true adds without clearing.',
+        '- value is required for type="type" Accept to write anything; it is ignored for other types.',
+        '- keys (an array of chord arrays, e.g. [["LeftControl","L"]] or [["LeftControl","A"],["Backspace"]]) is required for type="shortcut" Accept; it is ignored for other types.',
       ].join('\n'),
       inputSchema: indicateInputSchema,
     },

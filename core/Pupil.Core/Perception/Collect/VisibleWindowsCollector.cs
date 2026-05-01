@@ -11,17 +11,16 @@ internal static class VisibleWindowsCollector
     /// each subsequent window before traversing its cached UIA subtree.
     /// </remarks>
     internal static (List<RawNode> raw, HashSet<string> windowTitles, int considered, int scanned) CollectRawVisibleWindows(
-        int sw,
-        int sh,
+        RectI screenBounds,
         nint excludeHwnd = 0,
         int maxWindows = PerceptionConstants.MaxWindows,
         double minVisibleRatio = PerceptionConstants.MinVisibleRatio)
     {
         // Build one cache request reused for every selected top-level window.
         var (automation, cacheRequest) = UiaCache.BuildCacheRequest();
-        var hwnds = EnumerateVisibleWindowsZOrder(sw, sh, excludeHwnd);
+        var hwnds = EnumerateVisibleWindowsZOrder(screenBounds, excludeHwnd);
         // Estimate what portion of each window is still visible after front windows occlude it.
-        var selected = ComputeVisibleWindowRegions(hwnds, sw, sh, maxWindows, minVisibleRatio);
+        var selected = ComputeVisibleWindowRegions(hwnds, screenBounds, maxWindows, minVisibleRatio);
 
         var raw = new List<RawNode>();
         var titles = new HashSet<string>();
@@ -54,7 +53,7 @@ internal static class VisibleWindowsCollector
     /// <summary>
     /// Enumerate visible non-minimized top-level windows in front-to-back z-order.
     /// </summary>
-    private static List<nint> EnumerateVisibleWindowsZOrder(int sw, int sh, nint excludeHwnd)
+    private static List<nint> EnumerateVisibleWindowsZOrder(RectI screenBounds, nint excludeHwnd)
     {
         var windows = new List<nint>();
         NativeMethods.EnumWindows((hwnd, _) =>
@@ -72,8 +71,8 @@ internal static class VisibleWindowsCollector
             {
                 return true;
             }
-            // Keep only windows with a non-empty intersection with the current screen.
-            var rect = WindowRect(hwnd, sw, sh);
+            // Keep only windows with a non-empty intersection with the virtual desktop.
+            var rect = WindowRect(hwnd, screenBounds);
             if (rect is null || Geometry.RectArea(rect.Value) == 0)
             {
                 return true;
@@ -86,9 +85,9 @@ internal static class VisibleWindowsCollector
     }
 
     /// <summary>
-    /// Read and clip a window rectangle against current screen bounds.
+    /// Read and clip a window rectangle against the virtual desktop bounds.
     /// </summary>
-    private static RectI? WindowRect(nint hwnd, int sw, int sh)
+    private static RectI? WindowRect(nint hwnd, RectI screenBounds)
     {
         if (!NativeMethods.GetWindowRect(hwnd, out var rect))
         {
@@ -97,7 +96,7 @@ internal static class VisibleWindowsCollector
 
         return Geometry.RectIntersection(
             new RectI(rect.Left, rect.Top, rect.Right, rect.Bottom),
-            new RectI(0, 0, sw, sh));
+            screenBounds);
     }
 
     /// <summary>
@@ -105,8 +104,7 @@ internal static class VisibleWindowsCollector
     /// </summary>
     private static List<(nint hwnd, List<RectI> visibleRegions, RectI rect)> ComputeVisibleWindowRegions(
         List<nint> hwndsFrontToBack,
-        int sw,
-        int sh,
+        RectI screenBounds,
         int maxWindows,
         double minVisibleRatio)
     {
@@ -115,7 +113,7 @@ internal static class VisibleWindowsCollector
         var kept = new List<(nint hwnd, List<RectI> visibleRegions, RectI rect)>();
         foreach (var hwnd in hwndsFrontToBack)
         {
-            var rect = WindowRect(hwnd, sw, sh);
+            var rect = WindowRect(hwnd, screenBounds);
             if (rect is null)
             {
                 continue;

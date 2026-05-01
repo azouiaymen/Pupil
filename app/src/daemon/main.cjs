@@ -11,6 +11,7 @@ const { SidecarManager } = require('../sidecar/manager.cjs');
 const { normalizeIndicator } = require('./state.cjs');
 const { OVERLAY_PROTOCOL_VERSION } = require('../common/protocol.cjs');
 const { daemonPipePath, runtimeRoot } = require('../common/paths.cjs');
+const input = require('./input.cjs');
 
 // =============================================================================
 // Constants
@@ -122,7 +123,9 @@ function createOverlayWindow() {
     frame: false,
     hasShadow: false,
     alwaysOnTop: true,
-    focusable: false,
+    // Focusable so the renderer can capture Tab via DOM keydown when an
+    // indicator is up. Click-through is preserved by setIgnoreMouseEvents below.
+    focusable: true,
     skipTaskbar: true,
     webPreferences: {
       preload: path.join(__dirname, '..', 'overlay', 'preload.cjs'),
@@ -146,7 +149,42 @@ function setWindowInteractivity(active) {
   mainWindow.setIgnoreMouseEvents(!interactive, { forward: true });
 }
 
-// Renderer expects bounds in window-local (virtual desktop relative) coordinates.
+// PerMonitorV2 sidecar emits UIA rects in physical screen pixels; Electron
+// display.bounds and virtualOrigin are DIP. Convert once so remap, storage,
+// and overlay CSS share one space with the BrowserWindow placement.
+function physicalBoundsToDipInPlace(indicator) {
+  const b = indicator.bounds;
+  if (!b) return;
+  if (process.platform !== 'win32') return;
+  if (typeof screen.screenToDipRect !== 'function') {
+    logger.warn('screen.screenToDipRect missing; leaving bounds unchanged (possible DPI mismatch).');
+    return;
+  }
+  try {
+    const rect = {
+      x: Math.round(Number(b.x)),
+      y: Math.round(Number(b.y)),
+      width: Math.round(Number(b.width)),
+      height: Math.round(Number(b.height)),
+    };
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const dip = screen.screenToDipRect(win, rect);
+    indicator.bounds = {
+      ...b,
+      x: Math.round(dip.x),
+      y: Math.round(dip.y),
+      width: Math.round(dip.width),
+      height: Math.round(dip.height),
+    };
+  } catch (err) {
+    logger.warn('physicalBoundsToDip failed:', err.message);
+  }
+}
+
+// Renderer expects bounds in window-local coordinates (virtual desktop relative
+// to the overlay window top-left). Subtract the same union-min origin used when
+// createOverlayWindow() positioned the BrowserWindow — not getContentBounds(),
+// which can disagree with UIA space on frameless transparent Windows overlays.
 function remapBoundsToWindowSpace(envelope) {
   if (envelope.command !== 'indicate') return envelope;
   const indicator = envelope.payload && envelope.payload.indicator;
@@ -242,21 +280,97 @@ function handleInteraction(payload) {
 
   if (payload.type === 'pong') return;
 
-  // Both `indicator_resolved` and `indicator_closed` evict the indicator from
-  // daemon state; they only differ in how the await waiter resolves.
-  if (payload.type === 'indicator_resolved' || payload.type === 'indicator_closed') {
+  if (payload.type === 'indicator_resolved') {
+    void resolveIndicatorFromRenderer(indicatorId, payload).catch((err) => {
+      logger.warn('indicator resolve failed:', err && (err.stack || err.message));
+    });
+    return;
+  }
+
+  if (payload.type === 'indicator_closed') {
+    indicators.delete(indicatorId);
+  }
+}
+
+// Renderer-driven resolution: may include an OS-level action (click/type) and a
+// keepVisible flag that controls whether the daemon should keep the indicator
+// in its map (so rehydrate after a renderer reload still shows it as in-flight)
+// or evict it immediately (Skip / X).
+async function resolveIndicatorFromRenderer(indicatorId, payload) {
+  const indicator = indicators.get(indicatorId);
+  const result = payload.result === 'done' || payload.result === 'skipped' ? payload.result : null;
+  const ALLOWED_ACTIONS = new Set(['click', 'type', 'shortcut']);
+  const action = ALLOWED_ACTIONS.has(payload.action) ? payload.action : null;
+  const keepVisible = payload.keepVisible === true;
+
+  let actionError = null;
+  // 'click' and 'type' require bounds; 'shortcut' may run without them and
+  // dispatch to whatever the OS currently has focused.
+  const requiresBounds = action === 'click' || action === 'type';
+  const canRun = action && indicator && (!requiresBounds || indicator.bounds);
+  if (canRun) {
+    try {
+      if (indicator.bounds) {
+        let cx;
+        let cy;
+        const cp = payload.clickPoint;
+        if (cp && typeof cp.x === 'number' && typeof cp.y === 'number' && Number.isFinite(cp.x) && Number.isFinite(cp.y)) {
+          let p = { x: cp.x, y: cp.y };
+          if (process.platform === 'win32' && typeof screen.dipToScreenPoint === 'function') {
+            p = screen.dipToScreenPoint(p);
+          }
+          cx = p.x;
+          cy = p.y;
+        } else {
+          // Stored bounds are DIP after handleIndicate; nut-js needs physical pixels.
+          cx = indicator.bounds.x + indicator.bounds.width / 2;
+          cy = indicator.bounds.y + indicator.bounds.height / 2;
+          if (process.platform === 'win32' && typeof screen.dipToScreenPoint === 'function') {
+            const p = screen.dipToScreenPoint({ x: cx, y: cy });
+            cx = p.x;
+            cy = p.y;
+          }
+        }
+        await input.clickAt(cx, cy);
+      }
+      if (action === 'type') {
+        await input.typeText(typeof indicator.value === 'string' ? indicator.value : '');
+      } else if (action === 'shortcut') {
+        // Without a focus click, the overlay (which we focus()'d to capture Tab)
+        // still owns the OS keyboard focus. Blur it so Windows hands focus back
+        // to the previously-foreground window before the chord fires; the
+        // pressShortcut() helper has its own settle delay.
+        if (!indicator.bounds && mainWindow && !mainWindow.isDestroyed()) {
+          try {
+            mainWindow.blur();
+          } catch (_e) {}
+        }
+        await input.pressShortcut(Array.isArray(indicator.keys) ? indicator.keys : []);
+      }
+    } catch (err) {
+      actionError = err;
+      logger.warn(`input action '${action}' failed:`, err.message);
+    }
+  } else if (action && requiresBounds && (!indicator || !indicator.bounds)) {
+    actionError = new Error(`Cannot perform '${action}': indicator ${indicatorId} has no bounds.`);
+    logger.warn(actionError.message);
+  } else if (action && !indicator) {
+    actionError = new Error(`Cannot perform '${action}': indicator ${indicatorId} not found in daemon state.`);
+    logger.warn(actionError.message);
+  }
+
+  if (!keepVisible) {
     indicators.delete(indicatorId);
   }
 
-  if (payload.type === 'indicator_resolved') {
-    const result = payload.result;
-    if (result === 'done' || result === 'skipped') {
-      const waiter = indicateResolutionWaiters.get(indicatorId);
-      if (waiter) {
-        clearTimeout(waiter.timer);
-        indicateResolutionWaiters.delete(indicatorId);
-        waiter.resolve(result);
-      }
+  const waiter = indicateResolutionWaiters.get(indicatorId);
+  if (waiter && result) {
+    clearTimeout(waiter.timer);
+    indicateResolutionWaiters.delete(indicatorId);
+    if (actionError) {
+      waiter.reject(actionError);
+    } else {
+      waiter.resolve(result);
     }
   }
 }
@@ -309,12 +423,21 @@ async function handleIndicate(params) {
   const append = Boolean(normalized.append);
   const awaitFlag = Boolean(normalized.await);
 
+  physicalBoundsToDipInPlace(normalized);
+
   if (!append) {
     indicators.clear();
     sendRendererCommand('hideAll', {});
   }
   indicators.set(indicatorId, normalized);
   sendRendererCommand('indicate', { indicator: normalized });
+  // Pull keyboard focus to the overlay so the renderer's Tab handler fires
+  // for the just-shown indicator. focus() is a no-op if the window is gone.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    try {
+      mainWindow.focus();
+    } catch (_e) {}
+  }
 
   if (!awaitFlag) {
     return { ok: true, indicator: normalized, result: null };

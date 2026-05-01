@@ -39,4 +39,16 @@ internal static class NativeMethods
     /// </summary>
     // SM_CXSCREEN (0), SM_CYSCREEN (1).
     internal static (int sw, int sh) ScreenSize() => (GetSystemMetrics(0), GetSystemMetrics(1));
+
+    /// <summary>
+    /// Get the virtual desktop rectangle that spans every monitor.
+    /// </summary>
+    /// <remarks>
+    /// UIA bounding rectangles, <c>GetWindowRect</c>, and <c>SetCursorPos</c> all live in
+    /// virtual-screen space, so clipping and occlusion math must use the same origin
+    /// instead of the primary monitor's (0,0)-anchored size from <see cref="ScreenSize"/>.
+    /// </remarks>
+    // SM_XVIRTUALSCREEN (76), SM_YVIRTUALSCREEN (77), SM_CXVIRTUALSCREEN (78), SM_CYVIRTUALSCREEN (79).
+    internal static (int x, int y, int w, int h) VirtualScreenBounds()
+        => (GetSystemMetrics(76), GetSystemMetrics(77), GetSystemMetrics(78), GetSystemMetrics(79));
 }

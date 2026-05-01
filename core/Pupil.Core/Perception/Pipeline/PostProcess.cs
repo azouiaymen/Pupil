@@ -100,10 +100,13 @@ internal static class PostProcess
     /// <summary>
     /// Build a strict containment tree from flat rectangles to derive structural leaves.
     /// </summary>
-    internal static TreeNode BuildContainmentTree(List<RawNode> results, int sw, int sh)
+    internal static TreeNode BuildContainmentTree(List<RawNode> results, RectI screenBounds)
     {
-        // Create a synthetic root and assign each node to the smallest strict containing parent.
-        var root = new TreeNode(new RawNode("_root", "_root", new RectOut(0, 0, sw, sh), 0, 999999));
+        // Synthetic root encloses the entire virtual desktop so containment compares against
+        // the same coordinate space the UIA bounding rects live in.
+        var rootW = screenBounds.Right - screenBounds.Left;
+        var rootH = screenBounds.Bottom - screenBounds.Top;
+        var root = new TreeNode(new RawNode("_root", "_root", new RectOut(screenBounds.Left, screenBounds.Top, rootW, rootH), 0, 999999));
         var nodes = new List<(TreeNode n, int x1, int y1, int x2, int y2, int area)>();
         foreach (var result in results)
         {
@@ -119,7 +122,7 @@ internal static class PostProcess
         foreach (var (node, nx1, ny1, nx2, ny2, nArea) in nodes)
         {
             var bestParent = root;
-            var bestArea = sw * sh;
+            var bestArea = rootW * rootH;
             foreach (var (candidate, cx1, cy1, cx2, cy2, cArea) in nodes)
             {
                 if (ReferenceEquals(candidate, node))

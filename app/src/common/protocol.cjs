@@ -7,14 +7,24 @@
 // Shim <-> daemon JSON-RPC envelope.
 const SHIM_PROTOCOL_VERSION = 1;
 
-// Daemon <-> overlay renderer command envelope. Inherited from the previous
-// Python runtime; the renderer still validates against this number.
-const OVERLAY_PROTOCOL_VERSION = 2;
+// Daemon <-> overlay renderer command envelope. v5 changes `keys` on the
+// `shortcut` indicator from a single chord (string[]) to a list of chord
+// steps (string[][]) executed in order with a fixed inter-step delay.
+const OVERLAY_PROTOCOL_VERSION = 5;
 
 // Daemon <-> sidecar JSON stdio envelope.
 const SIDECAR_PROTOCOL_VERSION = '1';
 
-const INDICATOR_TYPES = Object.freeze(['info', 'warning', 'wait', 'action', 'click', 'type']);
+const INDICATOR_TYPES = Object.freeze([
+  'info',
+  'warning',
+  'wait',
+  'action',
+  'click',
+  'type',
+  'shortcut',
+  'danger',
+]);
 
 const SHIM_METHODS = Object.freeze({
   PERCEIVE: 'perceive',

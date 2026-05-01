@@ -19,15 +19,18 @@ public static class PerceptionApi
     {
         try
         {
-            var (sw, sh) = NativeMethods.ScreenSize();
+            // Use the full virtual desktop so multi-monitor layouts (and monitors with
+            // negative origins) are clipped against the same coordinate space UIA emits.
+            var (vx, vy, vw, vh) = NativeMethods.VirtualScreenBounds();
+            var virtualScreen = new RectI(vx, vy, vx + vw, vy + vh);
             // Collect raw nodes from top-most visible windows, excluding caller window if provided.
-            var (raw, winTitles, _, _) = VisibleWindowsCollector.CollectRawVisibleWindows(sw, sh, excludeHwnd);
+            var (raw, winTitles, _, _) = VisibleWindowsCollector.CollectRawVisibleWindows(virtualScreen, excludeHwnd);
             // Reduce duplicates, merge adjacent text fragments, and remove likely noise.
             var results = PostProcess.Nms(raw);
             results = PostProcess.MergeTextNodes(results);
             results = PostProcess.FilterNoise(results, winTitles);
             // Keep only meaningful terminal nodes for downstream consumers.
-            var root = PostProcess.BuildContainmentTree(results, sw, sh);
+            var root = PostProcess.BuildContainmentTree(results, virtualScreen);
             var leaves = PostProcess.ExtractLeaves(root);
             var clean = leaves.Select(el => new OutputNode(el.Type, el.Name, el.Rect)).ToList();
             return JsonOutput.Serialize(clean);

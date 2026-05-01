@@ -13,19 +13,34 @@ html, body, #overlay-root {
   pointer-events: none;
 }
 
+#overlay-root {
+  position: relative;
+  isolation: isolate;
+}
+
 .indicator-bbox {
-  /* Target highlight box around the indicated UI region. */
+  /* Inner-only neon along the frame; transparent center; outer shadows stay outside. */
   position: absolute;
-  border-radius: 10px;
-  border: 2px solid;
-  background: color-mix(in srgb, currentColor 16%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 40%, transparent),
-    0 0 20px color-mix(in srgb, currentColor 40%, transparent);
+  z-index: 0;
+  border-radius: 6px;
+  border: 2px solid color-mix(in srgb, currentColor 92%, #ffffff 8%);
+  background: transparent;
+  /* Highlight is purely decorative; never participate in hit-testing so OS
+     clicks at the bbox center reach the underlying app, not the overlay. */
+  pointer-events: none;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 10px 36px rgba(0, 0, 0, 0.55),
+    0 24px 64px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 1px color-mix(in srgb, currentColor 55%, transparent),
+    inset 0 0 10px 1px color-mix(in srgb, currentColor 42%, transparent),
+    inset 0 0 22px 4px color-mix(in srgb, currentColor 22%, transparent);
 }
 
 .indicator-connector {
   /* Connector layer visually links floating cards to their target bounds. */
   position: absolute;
+  z-index: 1;
   left: 0;
   top: 0;
   width: 100%;
@@ -51,14 +66,16 @@ html, body, #overlay-root {
 
 .indicator-card {
   /* Card width is coupled with renderer clamp math (see applyCardPosition). */
+  /* Opaque panel: backdrop blur does not apply usefully through a transparent Electron overlay. */
   position: absolute;
+  z-index: 2;
   width: 320px;
   min-height: 70px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(28, 28, 32, 0.95);
-  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.38);
-  color: #f3f6ff;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--indicator-accent, #ffffff) 25%, transparent);
+  background: rgba(33, 33, 33, 0.88);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  color: #f8fafc;
   padding: 14px 16px;
   pointer-events: auto;
 }
@@ -79,7 +96,7 @@ html, body, #overlay-root {
 }
 
 .indicator-icon {
-  color: currentColor;
+  color: var(--indicator-accent, currentColor);
   display: inline-flex;
   flex: 0 0 auto;
 }
@@ -92,7 +109,7 @@ html, body, #overlay-root {
   /* Explicitly interactive even when parent overlay remains mostly pass-through. */
   border: 0;
   background: transparent;
-  color: rgba(255, 255, 255, 0.74);
+  color: rgba(248, 250, 252, 0.72);
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
@@ -102,57 +119,155 @@ html, body, #overlay-root {
 }
 
 .indicator-close:hover {
-  color: rgba(255, 255, 255, 0.96);
+  color: rgba(248, 250, 252, 0.95);
 }
 
 .indicator-title {
   margin: 0;
   font-size: 17px;
   line-height: 1.25;
-  color: currentColor;
+  color: var(--indicator-accent, #f8fafc);
 }
 
 .indicator-text {
   margin: 10px 0 0;
-  color: rgba(255, 255, 255, 0.88);
+  color: #e8edf5;
   font-size: 15px;
   line-height: 1.45;
 }
 
 .indicator-actions {
-  /* Await-mode controls live in a fixed footer layout for predictable click targets. */
+  /* Footer controls anchor bottom-right. Skip looks like text; Next/Accept
+     look like primary chips with the Tab key-cap glyph. */
   margin-top: 12px;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 
 .indicator-action-btn {
   pointer-events: auto;
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #f3f6ff;
+  background: transparent;
+  color: #f8fafc;
+  font: inherit;
   font-size: 13px;
   line-height: 1;
-  padding: 8px 10px;
+  padding: 7px 10px;
   cursor: pointer;
 }
 
-.indicator-action-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
+.indicator-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
-.indicator-action-btn-done {
-  /* Done action inherits current indicator type color for semantic continuity. */
-  border-color: color-mix(in srgb, currentColor 45%, rgba(255, 255, 255, 0.2));
-  background: color-mix(in srgb, currentColor 20%, rgba(255, 255, 255, 0.05));
+/* Skip is a transparent text-only affordance: no background, no border. */
+.indicator-action-btn-skip {
+  color: rgba(248, 250, 252, 0.7);
+  padding: 7px 6px;
 }
 
-/* Type color tokens must stay aligned with runtime indicator type definitions. */
-.indicator-info { color: #c9cdd4; }
-.indicator-warning { color: #ff5f66; }
-.indicator-wait { color: #8ed8ff; }
-.indicator-action { color: #7f8cff; }
-.indicator-click { color: #a880ff; }
-.indicator-type { color: #f36dff; }
+.indicator-action-btn-skip:hover:not(:disabled) {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+/* Next and Accept share a primary "whitish chip" treatment. */
+.indicator-action-btn-next,
+.indicator-action-btn-accept {
+  background: rgba(255, 255, 255, 0.92);
+  color: #1a1a1a;
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+}
+
+.indicator-action-btn-next:hover:not(:disabled),
+.indicator-action-btn-accept:hover:not(:disabled) {
+  background: #ffffff;
+}
+
+.indicator-action-btn.is-pending {
+  /* Mid-flight: spinner replaces the kbd; keep the chip readable but inert. */
+  opacity: 0.85;
+  cursor: progress;
+}
+
+.indicator-kbd {
+  /* Mini keyboard cap rendered inside Next/Accept. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  background: #fafafa;
+  font: 12px/1 ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  color: #222;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+}
+
+.indicator-spinner {
+  /* CSS-only spinner; currentColor keeps it readable on the white-ish chip. */
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  opacity: 0.85;
+  animation: indicator-spin 0.8s linear infinite;
+}
+
+@keyframes indicator-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Type accents: bbox, connector, card border, and header icon share --indicator-accent. */
+.indicator-info {
+  --indicator-accent: #aeb6c7;
+  color: var(--indicator-accent);
+}
+
+.indicator-warning {
+  --indicator-accent: #eab308;
+  color: var(--indicator-accent);
+}
+
+.indicator-wait {
+  --indicator-accent: #14b8a6;
+  color: var(--indicator-accent);
+}
+
+.indicator-action {
+  --indicator-accent: #4f6ae8;
+  color: var(--indicator-accent);
+}
+
+.indicator-click {
+  --indicator-accent: #22c55e;
+  color: var(--indicator-accent);
+}
+
+.indicator-type {
+  --indicator-accent: #a855f7;
+  color: var(--indicator-accent);
+}
+
+.indicator-shortcut {
+  --indicator-accent: #06b6d4;
+  color: var(--indicator-accent);
+}
+
+.indicator-danger {
+  --indicator-accent: #ef4444;
+  color: var(--indicator-accent);
+}

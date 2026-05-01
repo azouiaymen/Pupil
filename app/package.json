@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@nut-tree-fork/nut-js": "^4.2.6",
     "electron": "^41.3.0",
     "lucide": "^1.14.0",
     "zod": "^4.3.6"
