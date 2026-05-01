@@ -38,7 +38,7 @@ class SidecarManager extends EventEmitter {
   // missing because spawn errors on Windows surface late and confusingly.
   ensureAvailable() {
     if (!fs.existsSync(this._executablePath)) {
-      throw new Error(`pupil-core.exe not found at ${this._executablePath}. Run scripts/build-sidecar.ps1.`);
+      throw new Error(`pupil-core.exe not found at ${this._executablePath}. Run scripts/build.ps1.`);
     }
   }
 

@@ -19,7 +19,11 @@ function resolveElectronBinary() {
 }
 
 function daemonEntryPath() {
-  return path.resolve(__dirname, '..', 'daemon', 'main.cjs');
+  const entry = path.resolve(__dirname, '..', 'daemon', 'main.cjs');
+  if (!fs.existsSync(entry)) {
+    throw new Error(`Daemon entry missing at ${entry}.`);
+  }
+  return entry;
 }
 
 // Spawns the Electron daemon detached so it survives the shim process exit.
@@ -29,9 +33,6 @@ function spawnDaemon({ logger } = {}) {
   const electronBinary = resolveElectronBinary();
   const entry = daemonEntryPath();
   const appRoot = path.resolve(__dirname, '..', '..');
-  if (!fs.existsSync(entry)) {
-    throw new Error(`Daemon entry missing at ${entry}.`);
-  }
   if (logger) logger.info(`spawning daemon: ${electronBinary} ${entry}`);
   const env = { ...process.env };
   // Some MCP hosts set this for Node child processes; if inherited, Electron
