@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 5;
+const PROTOCOL_VERSION = 7;
 const overlayRoot = document.getElementById('overlay-root');
 const indicators = [];
 let indicatorSequence = 0;
@@ -9,6 +9,18 @@ const CARD_GAP_PX = 24;
 const TOOLTIP_ESTIMATED_HEIGHT_PX = 132;
 const CARD_WIDTH_PX = 320;
 const VIEWPORT_MARGIN_PX = 12;
+// In-overlay preview of `value.clip` on Ctrl+V lines (CSS ellipsis also applies).
+const INPUT_CLIP_EXCERPT_MAX_CHARS = 80;
+
+const TYPE_LABELS = {
+  info: 'Info',
+  warning: 'Warning',
+  wait: 'Wait',
+  action: 'Action',
+  click: 'Click',
+  input: 'Input',
+  danger: 'Danger',
+};
 
 const TYPE_META = {
   info: { icon: 'Info' },
@@ -16,27 +28,22 @@ const TYPE_META = {
   wait: { icon: 'Hourglass' },
   action: { icon: 'Sparkles' },
   click: { icon: 'MousePointerClick' }, // lucide: mouse-pointer-click
-  type: { icon: 'TextCursor' },
-  shortcut: { icon: 'Keyboard' },
+  input: { icon: 'Keyboard' },
   danger: { icon: 'Skull' },
 };
 
 // Action buttons rendered per indicator type. Types that map to an OS-level
-// effect (click/type) get a Skip + Accept pair; everything else gets a single
+// effect (click/input) get a Skip + Accept pair; everything else gets a single
 // Next button. Accept variants carry a non-null `action` so the daemon knows
 // what input automation to perform; Next is a pure resolution.
 const BUTTON_LAYOUTS = {
   click: [
-    { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: false },
+    { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: true },
     { kind: 'accept', label: 'Accept', result: 'done', action: 'click', keepVisible: true },
   ],
-  type: [
-    { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: false },
-    { kind: 'accept', label: 'Accept', result: 'done', action: 'type', keepVisible: true },
-  ],
-  shortcut: [
-    { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: false },
-    { kind: 'accept', label: 'Accept', result: 'done', action: 'shortcut', keepVisible: true },
+  input: [
+    { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: true },
+    { kind: 'accept', label: 'Accept', result: 'done', action: 'input', keepVisible: true },
   ],
   info: [{ kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true }],
   warning: [{ kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true }],
@@ -53,6 +60,94 @@ function primaryButtonFor(type) {
   // The button bound to Tab: Accept where present, otherwise Next.
   const layout = buttonsFor(type);
   return layout.find((btn) => btn.kind === 'accept') || layout.find((btn) => btn.kind === 'next');
+}
+
+function skipButtonFor(type) {
+  return buttonsFor(type).find((btn) => btn.kind === 'skip') || null;
+}
+
+function isDualFooterType(type) {
+  return type === 'click' || type === 'input';
+}
+
+function footerFocusKind(indicator) {
+  if (!isDualFooterType(indicator.type)) return null;
+  return indicator._footerFocus === 'skip' ? 'skip' : 'accept';
+}
+
+function applyFooterFocusState(actions, indicator) {
+  if (indicator._resolved || !isDualFooterType(indicator.type)) return;
+  const kind = footerFocusKind(indicator);
+  indicator._footerFocus = kind;
+  for (const btn of actions.querySelectorAll('.indicator-action-btn')) {
+    const match = btn.dataset.kind === kind;
+    btn.classList.toggle('indicator-foot-selected', match);
+    btn.classList.toggle('indicator-foot-ghost', !match);
+  }
+}
+
+function updateFooterFocusVisual(indicator) {
+  const card = overlayRoot.querySelector(`.indicator-card[data-id="${indicator._id}"]`);
+  if (!card) return;
+  const actions = card.querySelector('.indicator-actions');
+  if (!actions) return;
+  applyFooterFocusState(actions, indicator);
+}
+
+function isPasteChord(chord) {
+  if (!Array.isArray(chord) || chord.length === 0) return false;
+  const keys = new Set(chord.filter((k) => typeof k === 'string'));
+  const hasV = keys.has('V');
+  const hasCtrl = keys.has('LeftControl') || keys.has('RightControl') || keys.has('Control');
+  return hasV && hasCtrl;
+}
+
+function abbreviateKey(name) {
+  if (typeof name !== 'string') return String(name);
+  const table = {
+    LeftControl: 'Ctrl',
+    RightControl: 'Ctrl',
+    Control: 'Ctrl',
+    LeftAlt: 'Alt',
+    RightAlt: 'Alt',
+    LeftShift: 'Shift',
+    RightShift: 'Shift',
+    LeftSuper: 'Win',
+    RightSuper: 'Win',
+    Super: 'Win',
+  };
+  return table[name] || name;
+}
+
+function formatChordLine(chord, clipPlain) {
+  if (isPasteChord(chord)) {
+    if (typeof clipPlain === 'string' && clipPlain.length > 0) {
+      const excerpt =
+        clipPlain.length > INPUT_CLIP_EXCERPT_MAX_CHARS
+          ? `${clipPlain.slice(0, INPUT_CLIP_EXCERPT_MAX_CHARS)}…`
+          : clipPlain;
+      return `Ctrl+V · "${excerpt}"`;
+    }
+    return 'Ctrl+V';
+  }
+  return chord.map(abbreviateKey).join('+');
+}
+
+function buildInputSequenceBlock(indicator) {
+  if (indicator.type !== 'input') return null;
+  const v = indicator.value;
+  if (!v || typeof v !== 'object' || !Array.isArray(v.chords) || v.chords.length === 0) return null;
+  const clip = typeof v.clip === 'string' && v.clip.length > 0 ? v.clip : '';
+  const wrap = document.createElement('div');
+  wrap.className = 'indicator-input-seq';
+  for (const chord of v.chords) {
+    if (!Array.isArray(chord) || chord.length === 0) continue;
+    const line = document.createElement('div');
+    line.className = 'indicator-input-chord';
+    line.textContent = formatChordLine(chord, clip);
+    wrap.appendChild(line);
+  }
+  return wrap.childElementCount > 0 ? wrap : null;
 }
 
 function typeClass(type) {
@@ -75,7 +170,7 @@ function createIcon(iconName) {
 }
 
 function topMostUnresolved() {
-  // Last-rendered indicator is the visually topmost; Tab targets that one.
+  // Last-rendered indicator is the visually topmost; keyboard shortcuts target that one.
   for (let i = indicators.length - 1; i >= 0; i -= 1) {
     if (!indicators[i]._resolved) return indicators[i];
   }
@@ -112,10 +207,10 @@ function sendResolutionEvent(indicator, { result, action, keepVisible, clickPoin
 }
 
 function fireResolution(indicator, button) {
-  // Single source of truth for "user pressed Skip / Next / Accept (or Tab)".
-  // - keepVisible=true: the card stays as an in-flight spinner; the next
-  //   indicate(append=false) clears it. Used for Next and Accept.
-  // - keepVisible=false: splice now and re-render. Used for Skip.
+  // Single source of truth for "user pressed Skip / Next / Accept (or Tab / Esc)".
+  // - keepVisible=true: the card stays as an in-flight spinner on the fired
+  //   foot; the next indicate clears it. Used for Next, Accept, and Skip.
+  // - keepVisible=false: splice now and re-render (e.g. X close only).
   if (!indicator || indicator._resolved) return;
   indicator._resolved = true;
   indicator._resolvedKind = button.kind;
@@ -124,14 +219,14 @@ function fireResolution(indicator, button) {
     if (idx !== -1) indicators.splice(idx, 1);
     render();
   } else {
-    // Update just this card's controls in place so the click/type doesn't race
+    // Update just this card's controls in place so the click/input doesn't race
     // with a full DOM teardown that could pull focus away.
     updateActionRowFor(indicator);
   }
   let clickPoint = null;
   if (
-    (button.action === 'click' || button.action === 'type' || button.action === 'shortcut') &&
-    indicator.bounds
+    (button.action === 'click' || button.action === 'input') &&
+    indicator.coords
   ) {
     clickPoint = measureBboxScreenCenter(indicator._id);
   }
@@ -195,17 +290,17 @@ function rectOverlapArea(a, b) {
   return w * h;
 }
 
-function computeCardLeftTop(bounds) {
+function computeCardLeftTop(coords) {
   // Pick the first side (below, above, right, left) whose clamped card rect
   // does not overlap the padded bbox; fall back to the smallest-overlap side
   // so cards never spawn directly on top of the highlight, which would steal
   // OS clicks meant for the underlying control.
-  const padLeft = bounds.x - BOUNDS_PADDING_PX;
-  const padTop = bounds.y - BOUNDS_PADDING_PX;
-  const padRight = bounds.x + bounds.width + BOUNDS_PADDING_PX;
-  const padBottom = bounds.y + bounds.height + BOUNDS_PADDING_PX;
-  const centerX = bounds.x + bounds.width / 2;
-  const centerY = bounds.y + bounds.height / 2;
+  const padLeft = coords.x - BOUNDS_PADDING_PX;
+  const padTop = coords.y - BOUNDS_PADDING_PX;
+  const padRight = coords.x + coords.w + BOUNDS_PADDING_PX;
+  const padBottom = coords.y + coords.h + BOUNDS_PADDING_PX;
+  const centerX = coords.x + coords.w / 2;
+  const centerY = coords.y + coords.h / 2;
 
   const candidates = [
     { left: centerX - CARD_WIDTH_PX / 2, top: padBottom + CARD_GAP_PX },
@@ -249,7 +344,7 @@ function applyCardPosition(card, indicator, base) {
 
 function createConnector(indicator, card) {
   // Connectors visually tie floating cards to the highlighted target bounds.
-  if (!indicator.bounds) {
+  if (!indicator.coords) {
     return null;
   }
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -361,7 +456,7 @@ function buildHorizontalConnector(
 
 function updateConnector(connector, indicator, card) {
   // Connector path is recomputed from live card geometry (drag + resize aware).
-  if (!connector || !indicator.bounds) {
+  if (!connector || !indicator.coords) {
     return;
   }
   const inset = 16;
@@ -374,14 +469,14 @@ function updateConnector(connector, indicator, card) {
   const cardCenterX = cardLeft + cardWidth / 2;
   const cardCenterY = cardTop + cardHeight / 2;
 
-  const b = indicator.bounds;
-  const targetCenterX = b.x + b.width / 2;
-  const targetCenterY = b.y + b.height / 2;
+  const b = indicator.coords;
+  const targetCenterX = b.x + b.w / 2;
+  const targetCenterY = b.y + b.h / 2;
   const targetLeftX = b.x - BOUNDS_PADDING_PX;
-  const targetRightX = b.x + b.width + BOUNDS_PADDING_PX;
+  const targetRightX = b.x + b.w + BOUNDS_PADDING_PX;
   const targetTopY = b.y - BOUNDS_PADDING_PX;
   // Bottom anchor sits on the outer edge of the padded frame (1px outward fixes dot sitting visually inside).
-  const targetBottomY = b.y + b.height + BOUNDS_PADDING_PX + 1;
+  const targetBottomY = b.y + b.h + BOUNDS_PADDING_PX + 1;
 
   const vx = cardCenterX - targetCenterX;
   const vy = cardCenterY - targetCenterY;
@@ -504,7 +599,7 @@ function bindCardDrag(card, closeButton, indicator, connector) {
     const nextLeft = event.clientX - offsetX;
     const nextTop = event.clientY - offsetY;
     indicator._position = { left: nextLeft, top: nextTop };
-    applyCardPosition(card, indicator, nextTop, nextTop, nextLeft);
+    applyCardPosition(card, indicator, { left: nextLeft, top: nextTop });
     updateConnector(connector, indicator, card);
   };
 
@@ -547,6 +642,14 @@ function createKbdGlyph() {
   return kbd;
 }
 
+function createEscKbdGlyph() {
+  const kbd = document.createElement('kbd');
+  kbd.className = 'indicator-kbd indicator-kbd-esc';
+  kbd.textContent = 'Esc';
+  kbd.setAttribute('aria-hidden', 'true');
+  return kbd;
+}
+
 function createSpinner() {
   const spinner = document.createElement('span');
   spinner.className = 'indicator-spinner';
@@ -557,7 +660,7 @@ function createSpinner() {
 
 function buildActionRow(indicator) {
   // Always rendered; layout depends on indicator.type. After resolution the row
-  // shows a spinner in place of the Tab keycap for the fired button and disables
+  // shows a spinner in place of the keycap hint on the fired button and disables
   // siblings so the user cannot double-trigger the daemon.
   const actions = document.createElement('div');
   actions.className = 'indicator-actions';
@@ -571,12 +674,15 @@ function buildActionRow(indicator) {
     labelSpan.className = 'indicator-action-label';
     labelSpan.textContent = button.label;
     el.appendChild(labelSpan);
-    if (button.kind !== 'skip') {
+    if (button.kind === 'skip') {
+      el.appendChild(createEscKbdGlyph());
+    } else {
       el.appendChild(createKbdGlyph());
     }
     el.addEventListener('click', () => fireResolution(indicator, button));
     actions.appendChild(el);
   }
+  if (!indicator._resolved) applyFooterFocusState(actions, indicator);
   applyResolvedState(actions, indicator);
   return actions;
 }
@@ -584,6 +690,7 @@ function buildActionRow(indicator) {
 function applyResolvedState(actions, indicator) {
   if (!indicator._resolved) return;
   for (const btn of actions.querySelectorAll('.indicator-action-btn')) {
+    btn.classList.remove('indicator-foot-selected', 'indicator-foot-ghost');
     btn.disabled = true;
     if (btn.dataset.kind === indicator._resolvedKind) {
       btn.classList.add('is-pending');
@@ -612,17 +719,17 @@ function render() {
     card.dataset.id = indicator._id;
     const meta = TYPE_META[indicator.type] || TYPE_META.info;
 
-    if (indicator.bounds) {
+    if (indicator.coords) {
       const bbox = document.createElement('div');
       bbox.className = `indicator-bbox ${typeClass(indicator.type)}`;
       bbox.dataset.indicatorId = indicator._id;
-      bbox.style.left = `${indicator.bounds.x - BOUNDS_PADDING_PX}px`;
-      bbox.style.top = `${indicator.bounds.y - BOUNDS_PADDING_PX}px`;
-      bbox.style.width = `${indicator.bounds.width + BOUNDS_PADDING_PX * 2}px`;
-      bbox.style.height = `${indicator.bounds.height + BOUNDS_PADDING_PX * 2}px`;
+      bbox.style.left = `${indicator.coords.x - BOUNDS_PADDING_PX}px`;
+      bbox.style.top = `${indicator.coords.y - BOUNDS_PADDING_PX}px`;
+      bbox.style.width = `${indicator.coords.w + BOUNDS_PADDING_PX * 2}px`;
+      bbox.style.height = `${indicator.coords.h + BOUNDS_PADDING_PX * 2}px`;
       overlayRoot.appendChild(bbox);
 
-      applyCardPosition(card, indicator, computeCardLeftTop(indicator.bounds));
+      applyCardPosition(card, indicator, computeCardLeftTop(indicator.coords));
     } else {
       applyCardPosition(card, indicator, { left: 24, top: 24 });
     }
@@ -634,12 +741,10 @@ function render() {
     titleWrap.className = 'indicator-title-wrap';
     titleWrap.appendChild(createIcon(meta.icon));
 
-    if (indicator.title || indicator.text) {
-      const title = document.createElement('h3');
-      title.className = 'indicator-title';
-      title.textContent = indicator.title || indicator.type;
-      titleWrap.appendChild(title);
-    }
+    const title = document.createElement('h3');
+    title.className = 'indicator-title';
+    title.textContent = TYPE_LABELS[indicator.type] || indicator.type;
+    titleWrap.appendChild(title);
 
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
@@ -654,11 +759,16 @@ function render() {
     const connector = createConnector(indicator, card);
     bindCardDrag(card, closeButton, indicator, connector);
 
-    if (indicator.text) {
+    if (indicator.desc) {
       const text = document.createElement('p');
       text.className = 'indicator-text';
-      text.textContent = indicator.text;
+      text.textContent = indicator.desc;
       card.appendChild(text);
+    }
+
+    const inputSeq = buildInputSequenceBlock(indicator);
+    if (inputSeq) {
+      card.appendChild(inputSeq);
     }
 
     const actions = buildActionRow(indicator);
@@ -706,7 +816,11 @@ window.overlayApi.onCommand((message) => {
       if (!indicator || typeof indicator.type !== 'string') {
         throw new Error('Missing indicator payload.');
       }
-      indicators.push({ ...indicator, _id: indicator.id || `indicator-${indicatorSequence++}` });
+      indicators.push({
+        ...indicator,
+        _id: indicator.id || `indicator-${indicatorSequence++}`,
+        _footerFocus: isDualFooterType(indicator.type) ? 'accept' : undefined,
+      });
       render();
       return;
     }
@@ -729,18 +843,35 @@ window.overlayApi.sendEvent({
 });
 
 window.addEventListener('keydown', (event) => {
-  // Tab acts as a global keyboard shortcut for the topmost unresolved
-  // indicator's primary action (Accept where available, otherwise Next).
-  // Suppress the browser's default focus-traversal so Tab is fully consumed
-  // by Pupil while indicators are up.
-  if (event.key !== 'Tab') return;
+  if (event.key !== 'Tab' && event.key !== 'Escape') return;
   const target = topMostUnresolved();
   if (!target) return;
-  event.preventDefault();
-  event.stopPropagation();
-  const button = primaryButtonFor(target.type);
-  if (button) {
-    fireResolution(target, button);
+  if (event.key === 'Tab') {
+    // Suppress default focus-traversal while indicators are up.
+    event.preventDefault();
+    event.stopPropagation();
+    // Shift+Tab toggles Skip vs Accept on click/input so the primary chip
+    // ("sniper") can sit on either foot; Tab then fires the selected one.
+    if (event.shiftKey && isDualFooterType(target.type)) {
+      target._footerFocus = footerFocusKind(target) === 'skip' ? 'accept' : 'skip';
+      updateFooterFocusVisual(target);
+      return;
+    }
+    let button;
+    if (isDualFooterType(target.type)) {
+      button = buttonsFor(target.type).find((b) => b.kind === footerFocusKind(target));
+    } else {
+      button = primaryButtonFor(target.type);
+    }
+    if (button) fireResolution(target, button);
+    return;
+  }
+  if (event.key === 'Escape') {
+    const skipButton = skipButtonFor(target.type);
+    if (!skipButton) return;
+    event.preventDefault();
+    event.stopPropagation();
+    fireResolution(target, skipButton);
   }
 });
 
@@ -754,7 +885,7 @@ window.addEventListener('mouseleave', () => {
 
 window.addEventListener('resize', () => {
   for (const indicator of indicators) {
-    if (!indicator.bounds) {
+    if (!indicator.coords) {
       continue;
     }
     const card = overlayRoot.querySelector(`.indicator-card[data-id="${indicator._id}"]`);

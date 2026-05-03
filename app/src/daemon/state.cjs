@@ -2,91 +2,111 @@
 
 const { INDICATOR_TYPES } = require('../common/protocol.cjs');
 
-// Validates and normalizes raw indicator payloads from MCP callers.
-// Mirrors the previous Python normalize_indicator() so renderer behavior is unchanged.
-function coerceInt(value, field) {
-  if (typeof value === 'boolean' || typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new Error(`${field} must be a number.`);
+function parseCoordsString(s) {
+  if (typeof s !== 'string' || !s.trim()) {
+    throw new Error('coords must be a non-empty comma-separated string "x,y,w,h".');
   }
-  return Math.trunc(value);
+  const parts = s.split(',').map((p) => p.trim());
+  if (parts.length !== 4) {
+    throw new Error('coords must contain exactly four integers: x,y,w,h.');
+  }
+  const nums = parts.map((p, i) => {
+    const n = Number.parseInt(p, 10);
+    if (!Number.isFinite(n)) {
+      throw new Error(`coords part ${i + 1} is not a valid integer.`);
+    }
+    return n;
+  });
+  const [x, y, w, h] = nums;
+  if (w <= 0 || h <= 0) {
+    throw new Error('coords w and h must be positive.');
+  }
+  return { x, y, w, h };
 }
 
+function isChordList(v) {
+  if (!Array.isArray(v) || v.length === 0) return false;
+  return v.every(
+    (chord) =>
+      Array.isArray(chord) &&
+      chord.length > 0 &&
+      chord.every((k) => typeof k === 'string' && k.trim().length > 0)
+  );
+}
+
+// Validates the flat wire shape from MCP: { type, coords?, desc?, value? }.
 function normalizeIndicator(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new Error('indicator must be an object.');
+    throw new Error('indicator payload must be a non-array object.');
   }
+  for (const k of Object.keys(payload)) {
+    if (!['type', 'coords', 'desc', 'value'].includes(k)) {
+      throw new Error(`Unknown field '${k}'. Use only type, coords, desc, value.`);
+    }
+  }
+
   const rawType = payload.type;
   if (typeof rawType !== 'string' || !INDICATOR_TYPES.includes(rawType)) {
     throw new Error(`type must be one of: ${INDICATOR_TYPES.join(', ')}.`);
   }
   const normalized = { type: rawType };
 
-  if (payload.bounds !== undefined && payload.bounds !== null) {
-    if (typeof payload.bounds !== 'object' || Array.isArray(payload.bounds)) {
-      throw new Error('bounds must be an object when provided.');
+  if (payload.coords !== undefined && payload.coords !== null) {
+    if (typeof payload.coords !== 'string') {
+      throw new Error('coords must be a string "x,y,w,h" when provided.');
     }
-    const x = coerceInt(payload.bounds.x, 'bounds.x');
-    const y = coerceInt(payload.bounds.y, 'bounds.y');
-    const width = coerceInt(payload.bounds.width, 'bounds.width');
-    const height = coerceInt(payload.bounds.height, 'bounds.height');
-    if (width <= 0 || height <= 0) {
-      throw new Error('bounds.width and bounds.height must be positive.');
-    }
-    normalized.bounds = { x, y, width, height };
+    normalized.coords = parseCoordsString(payload.coords);
   }
-  if (payload.title !== undefined && payload.title !== null) {
-    if (typeof payload.title !== 'string') throw new Error('title must be a string when provided.');
-    normalized.title = payload.title;
-  }
-  if (payload.text !== undefined && payload.text !== null) {
-    if (typeof payload.text !== 'string') throw new Error('text must be a string when provided.');
-    normalized.text = payload.text;
-  }
-  const append = payload.append === undefined ? false : payload.append;
-  if (typeof append !== 'boolean') throw new Error('append must be a boolean when provided.');
-  normalized.append = append;
 
-  // Default flipped from false to true: every indicator now blocks until the
-  // user resolves it via the type-aware action buttons (Next or Skip+Accept).
-  // The flag is still accepted on the wire so callers can opt out explicitly.
-  const awaitFlag = payload.await === undefined ? true : payload.await;
-  if (typeof awaitFlag !== 'boolean') throw new Error('await must be a boolean when provided.');
-  normalized.await = awaitFlag;
+  if (payload.desc !== undefined && payload.desc !== null) {
+    if (typeof payload.desc !== 'string' || payload.desc.trim().length === 0) {
+      throw new Error('desc must be a non-empty string when provided.');
+    }
+    normalized.desc = payload.desc;
+  }
 
   if (payload.value !== undefined && payload.value !== null) {
-    if (typeof payload.value !== 'string') throw new Error('value must be a string when provided.');
-    normalized.value = payload.value;
-  }
-
-  if (payload.keys !== undefined && payload.keys !== null) {
-    if (!Array.isArray(payload.keys) || payload.keys.length === 0) {
-      throw new Error('keys must be a non-empty array of chord steps (each step is an array of nut-js Key names).');
-    }
-    const chords = [];
-    for (const chord of payload.keys) {
-      if (!Array.isArray(chord) || chord.length === 0) {
-        throw new Error('each keys entry must be a non-empty array of nut-js Key names (chord step).');
+    if (rawType === 'input') {
+      const v = payload.value;
+      if (typeof v !== 'object' || Array.isArray(v)) {
+        throw new Error("type='input' requires value as an object { clip?, chords }.");
       }
-      for (const k of chord) {
-        if (typeof k !== 'string' || k.trim().length === 0) {
-          throw new Error('chord entries must be non-empty strings.');
+      const keys = Object.keys(v);
+      for (const k of keys) {
+        if (k !== 'clip' && k !== 'chords') {
+          throw new Error(`type='input' value: unknown key '${k}' (only clip, chords allowed).`);
         }
       }
-      chords.push(chord.slice());
+      if (!isChordList(v.chords)) {
+        throw new Error(
+          "type='input' requires value.chords as a non-empty array of chord arrays (e.g. [['LeftControl','A'],['Backspace']])."
+        );
+      }
+      if (v.clip !== undefined) {
+        if (typeof v.clip !== 'string' || v.clip.length === 0) {
+          throw new Error("type='input' value.clip must be a non-empty string when provided.");
+        }
+      }
+      const out = { chords: v.chords.map((chord) => chord.slice()) };
+      if (v.clip !== undefined) {
+        out.clip = v.clip;
+      }
+      normalized.value = out;
+    } else {
+      throw new Error(`value is not allowed for type='${rawType}'.`);
     }
-    normalized.keys = chords;
   }
 
-  if (rawType === 'shortcut' && (!normalized.keys || normalized.keys.length === 0)) {
-    throw new Error("type='shortcut' requires a non-empty keys chord-list (e.g. [['LeftControl','A'],['Backspace']]).");
+  if (rawType === 'input' && (!normalized.value || !normalized.value.chords || normalized.value.chords.length === 0)) {
+    throw new Error("type='input' requires value with non-empty chords.");
   }
 
-  if (payload.id !== undefined && payload.id !== null) {
-    if (typeof payload.id !== 'string' || payload.id.trim().length === 0) {
-      throw new Error('id must be a non-empty string when provided.');
+  if (rawType === 'click') {
+    if (!normalized.coords) {
+      throw new Error(`type='${rawType}' requires coords.`);
     }
-    normalized.id = payload.id;
   }
+
   return normalized;
 }
 

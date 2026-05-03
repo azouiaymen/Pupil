@@ -39,18 +39,33 @@ The Python MCP server lives in `mcp/main.py` and exposes these tools:
 - `clear` removes the current overlay rectangle.
 - If the sidecar or DLL is missing, run `.\scripts\build.ps1` first.
 
-### Indicator buttons & lifecycle
+### Node MCP shim (`app/src/shim`) — indicator shape
 
-Every `indicate` call blocks until the user resolves it (`await` defaults to `true`). The card always renders a footer in the bottom-right; the buttons depend on the indicator's `type`:
+`perceive` takes **no arguments**. `indicate` takes a **flat** object (no nested `indicator` wrapper):
 
-- `info` / `warning` / `wait` / `action` / `danger`: a single **Next** button. Resolves `"done"`. Performs no OS-level action.
-- `click`: **Skip** (resolves `"skipped"`) and **Accept** (performs an OS-level left click at the bounding-box center, then resolves `"done"`).
-- `type`: **Skip** and **Accept**. Accept clicks the bounding-box center to focus the target field, then types the indicator's `value` string, then resolves `"done"`.
-- `shortcut`: **Skip** and **Accept**. Accept runs the chord sequence listed in `keys` — a **list of chord steps**, where each chord is an array of `nut-js` `Key` names (e.g. `[["LeftControl", "L"]]` for a single chord, or `[["LeftControl", "A"], ["Backspace"]]` for select-all-then-delete). Steps run sequentially with a fixed ~50ms delay between them inside a single Accept. If `bounds` are provided, Accept first clicks the bounding-box center to focus that control and then fires the chord sequence — pass `bounds` whenever you need it to reach a specific window. If `bounds` are omitted, the daemon best-effort blurs the overlay so Windows reverts focus to the previously foreground window before sending the chord; this works for global shortcuts but is unreliable for app-specific ones.
+- `type` — `info` | `warning` | `wait` | `action` | `click` | `input` | `danger`
+- `coords` — optional string `"x,y,w,h"` (integers, `w` and `h` positive). **Required** for `click` only; optional for `input` (recommended when a specific control must receive focus before chords).
+- `desc` — optional extra copy; omit unless it adds information the highlight does not (do not repeat the control label).
+- `value` — **required** for `input` only: object `{ clip?: string, chords: string[][] }`. `chords` is a non-empty list of chord steps (nut-js `Key` names per chord, modifiers first, ~50ms between steps). Optional `clip`: before chords run, the daemon saves the current plain-text clipboard, writes `clip`, runs `chords` (typically including `Ctrl+V`), then restores the saved text in a `finally` so failures do not leave `clip` on the clipboard. **Accept on `click`** performs a single OS click at the **center** of the `coords` bbox. **Accept on `input` with `coords`** does the same center click first to focus, then runs clipboard + chords as above; **without `coords`**, the daemon blurs the overlay and sends chords to the previous foreground window (best-effort).
 
-Pressing the **Tab** key fires the topmost indicator's primary action (Accept where present, otherwise Next). The X button always resolves as `"skipped"` and removes the card. After Next/Accept fires, the card stays visible with a loading spinner where the Tab keycap was; the next `indicate(append=false)` call (or `hideAll`) clears it.
+Every `indicate` call **replaces** any prior card and **blocks** until the user resolves it. The card header label is derived from `type`. Footer buttons:
 
-The `value` field on the indicator is only meaningful for `type="type"`; the `keys` field is only meaningful for `type="shortcut"` and must be a non-empty array of non-empty chord arrays (a single chord still needs to be wrapped, e.g. `[["LeftControl", "L"]]`). Both are ignored for other types.
+- `info` / `warning` / `wait` / `action` / `danger`: **Next** only (Tab). Resolves `"done"`.
+- `click` / `input`: **Skip** (**Escape**) + **Accept** (**Tab**). Accept runs the OS action, then resolves `"done"`.
+
+After Next/Accept, the card shows a spinner until the **next** `indicate` clears it. **X** resolves `"skipped"`.
+
+On success, the MCP tool response is JSON text shaped like:
+
+```json
+{ "result": "done", "perceive": "<compact CSV; same schema as perceive tool>" }
+```
+
+Each `indicate` returns the next `perceive` snapshot (taken ~50ms after the resolved action), so a separate `perceive()` is only needed for the very first read (or after a long external delay or user-side change outside Pupil). In that bundled CSV only, each row’s `name` field is truncated after 100 characters with `...` appended; the standalone `perceive` tool does not truncate names.
+
+### Indicator buttons & lifecycle (Python `mcp/main.py`)
+
+Legacy rectangle overlay; see Node shim above for the full Pupil indicator model.
 
 ### Cursor MCP registration (example)
 

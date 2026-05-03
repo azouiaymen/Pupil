@@ -163,7 +163,20 @@ function typeCode(rawType) {
   return TYPE_CODES[type] || type;
 }
 
-function perceiveToCompactCsv(nodes) {
+/** Max length of the CSV `name` column when bundled with `indicate` only; longer names get `...` appended. Standalone `perceive` is not truncated. */
+const INDICATE_PERCEIVE_NAME_MAX_CHARS = 100;
+
+/**
+ * @param {unknown[]} nodes
+ * @param {{ truncateNameAt?: number }} [options] If `truncateNameAt` is a positive number, the `name` field per row is truncated to that many characters with `...` appended when longer.
+ */
+function perceiveToCompactCsv(nodes, options) {
+  const truncateAt =
+    options &&
+    typeof options.truncateNameAt === 'number' &&
+    options.truncateNameAt > 0
+      ? Math.floor(options.truncateNameAt)
+      : 0;
   const lines = [
     '# T=TextControl G=GroupControl B=ButtonControl P=PaneControl M=MenuItemControl E=EditControl K=CheckBoxControl L=ListItemControl W=WindowControl',
     '# meta: omit enabled, not-focusable, not-focused, unselected, collapsed, indeterminate. Always c|uc when check state appears. d=disabled f=focusable F=focused s=selected c=checked uc=unchecked x=expanded os=offscreen',
@@ -181,7 +194,10 @@ function perceiveToCompactCsv(nodes) {
     }
     const type = typeCode(node.type || node.role || '');
     const encodedMeta = compressMeta(meta);
-    const name = encodedMeta ? `${label} [${encodedMeta}]` : label;
+    let name = encodedMeta ? `${label} [${encodedMeta}]` : label;
+    if (truncateAt > 0 && name.length > truncateAt) {
+      name = `${name.slice(0, truncateAt)}...`;
+    }
     const { x, y, w, h } = rectFromNode(node);
     lines.push([rowId, csvEscape(type), csvEscape(name), x, y, w, h].join(','));
     rowId += 1;
@@ -191,4 +207,5 @@ function perceiveToCompactCsv(nodes) {
 
 module.exports = {
   perceiveToCompactCsv,
+  INDICATE_PERCEIVE_NAME_MAX_CHARS,
 };

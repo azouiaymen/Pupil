@@ -21,6 +21,7 @@ const MAX_PENDING_RENDERER_COMMANDS = 256;
 const RENDERER_HEARTBEAT_INTERVAL_MS = 4000;
 const AWAIT_RESOLUTION_TIMEOUT_MS = 180000;
 const INDICATE_ACK_TIMEOUT_MS = 4000;
+const POST_RESOLUTION_PERCEIVE_DELAY_MS = 250;
 
 // Lightweight stderr logger (stdout is reserved for IPC events to other clients).
 const logger = {
@@ -123,8 +124,8 @@ function createOverlayWindow() {
     frame: false,
     hasShadow: false,
     alwaysOnTop: true,
-    // Focusable so the renderer can capture Tab via DOM keydown when an
-    // indicator is up. Click-through is preserved by setIgnoreMouseEvents below.
+    // Focusable so the renderer can capture Tab / Escape via DOM keydown when
+    // an indicator is up. Click-through is preserved by setIgnoreMouseEvents below.
     focusable: true,
     skipTaskbar: true,
     webPreferences: {
@@ -152,53 +153,53 @@ function setWindowInteractivity(active) {
 // PerMonitorV2 sidecar emits UIA rects in physical screen pixels; Electron
 // display.bounds and virtualOrigin are DIP. Convert once so remap, storage,
 // and overlay CSS share one space with the BrowserWindow placement.
-function physicalBoundsToDipInPlace(indicator) {
-  const b = indicator.bounds;
-  if (!b) return;
+function physicalCoordsToDipInPlace(indicator) {
+  const c = indicator.coords;
+  if (!c) return;
   if (process.platform !== 'win32') return;
   if (typeof screen.screenToDipRect !== 'function') {
-    logger.warn('screen.screenToDipRect missing; leaving bounds unchanged (possible DPI mismatch).');
+    logger.warn('screen.screenToDipRect missing; leaving coords unchanged (possible DPI mismatch).');
     return;
   }
   try {
     const rect = {
-      x: Math.round(Number(b.x)),
-      y: Math.round(Number(b.y)),
-      width: Math.round(Number(b.width)),
-      height: Math.round(Number(b.height)),
+      x: Math.round(Number(c.x)),
+      y: Math.round(Number(c.y)),
+      width: Math.round(Number(c.w)),
+      height: Math.round(Number(c.h)),
     };
     const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
     const dip = screen.screenToDipRect(win, rect);
-    indicator.bounds = {
-      ...b,
+    indicator.coords = {
+      ...c,
       x: Math.round(dip.x),
       y: Math.round(dip.y),
-      width: Math.round(dip.width),
-      height: Math.round(dip.height),
+      w: Math.round(dip.width),
+      h: Math.round(dip.height),
     };
   } catch (err) {
-    logger.warn('physicalBoundsToDip failed:', err.message);
+    logger.warn('physicalCoordsToDip failed:', err.message);
   }
 }
 
-// Renderer expects bounds in window-local coordinates (virtual desktop relative
+// Renderer expects coords in window-local coordinates (virtual desktop relative
 // to the overlay window top-left). Subtract the same union-min origin used when
 // createOverlayWindow() positioned the BrowserWindow — not getContentBounds(),
 // which can disagree with UIA space on frameless transparent Windows overlays.
-function remapBoundsToWindowSpace(envelope) {
+function remapCoordsToWindowSpace(envelope) {
   if (envelope.command !== 'indicate') return envelope;
   const indicator = envelope.payload && envelope.payload.indicator;
-  if (!indicator || !indicator.bounds) return envelope;
+  if (!indicator || !indicator.coords) return envelope;
   return {
     ...envelope,
     payload: {
       ...envelope.payload,
       indicator: {
         ...indicator,
-        bounds: {
-          ...indicator.bounds,
-          x: Number(indicator.bounds.x) - virtualOrigin.x,
-          y: Number(indicator.bounds.y) - virtualOrigin.y,
+        coords: {
+          ...indicator.coords,
+          x: Number(indicator.coords.x) - virtualOrigin.x,
+          y: Number(indicator.coords.y) - virtualOrigin.y,
         },
       },
     },
@@ -206,7 +207,7 @@ function remapBoundsToWindowSpace(envelope) {
 }
 
 function dispatchToRenderer(envelope) {
-  const mapped = remapBoundsToWindowSpace(envelope);
+  const mapped = remapCoordsToWindowSpace(envelope);
   if (!mainWindow || mainWindow.isDestroyed()) {
     throw new Error('Overlay window is not available.');
   }
@@ -292,25 +293,26 @@ function handleInteraction(payload) {
   }
 }
 
-// Renderer-driven resolution: may include an OS-level action (click/type) and a
+// Renderer-driven resolution: may include an OS-level action (click/input) and a
 // keepVisible flag that controls whether the daemon should keep the indicator
 // in its map (so rehydrate after a renderer reload still shows it as in-flight)
-// or evict it immediately (Skip / X).
+// or evict it immediately (X close). Skip uses the same in-flight path as Next/Accept.
 async function resolveIndicatorFromRenderer(indicatorId, payload) {
   const indicator = indicators.get(indicatorId);
   const result = payload.result === 'done' || payload.result === 'skipped' ? payload.result : null;
-  const ALLOWED_ACTIONS = new Set(['click', 'type', 'shortcut']);
+  const ALLOWED_ACTIONS = new Set(['click', 'input']);
   const action = ALLOWED_ACTIONS.has(payload.action) ? payload.action : null;
   const keepVisible = payload.keepVisible === true;
 
   let actionError = null;
-  // 'click' and 'type' require bounds; 'shortcut' may run without them and
-  // dispatch to whatever the OS currently has focused.
-  const requiresBounds = action === 'click' || action === 'type';
-  const canRun = action && indicator && (!requiresBounds || indicator.bounds);
+  // Only `click` requires coords. `input` may omit coords (blur overlay then chords
+  // to previous foreground); with coords, Accept clicks the bbox center first
+  // (renderer sends clickPoint at bbox center; daemon falls back to coords center).
+  const requiresCoords = action === 'click';
+  const canRun = action && indicator && (!requiresCoords || indicator.coords);
   if (canRun) {
     try {
-      if (indicator.bounds) {
+      if (indicator.coords) {
         let cx;
         let cy;
         const cp = payload.clickPoint;
@@ -322,9 +324,10 @@ async function resolveIndicatorFromRenderer(indicatorId, payload) {
           cx = p.x;
           cy = p.y;
         } else {
-          // Stored bounds are DIP after handleIndicate; nut-js needs physical pixels.
-          cx = indicator.bounds.x + indicator.bounds.width / 2;
-          cy = indicator.bounds.y + indicator.bounds.height / 2;
+          // Stored coords are DIP after handleIndicate; nut-js needs physical pixels.
+          // Center of bbox (same as renderer's measureBboxScreenCenter intent).
+          cx = indicator.coords.x + indicator.coords.w / 2;
+          cy = indicator.coords.y + indicator.coords.h / 2;
           if (process.platform === 'win32' && typeof screen.dipToScreenPoint === 'function') {
             const p = screen.dipToScreenPoint({ x: cx, y: cy });
             cx = p.x;
@@ -333,26 +336,28 @@ async function resolveIndicatorFromRenderer(indicatorId, payload) {
         }
         await input.clickAt(cx, cy);
       }
-      if (action === 'type') {
-        await input.typeText(typeof indicator.value === 'string' ? indicator.value : '');
-      } else if (action === 'shortcut') {
-        // Without a focus click, the overlay (which we focus()'d to capture Tab)
+      if (action === 'input') {
+        // Without a focus click, the overlay (which we focus()'d for Tab/Escape)
         // still owns the OS keyboard focus. Blur it so Windows hands focus back
-        // to the previously-foreground window before the chord fires; the
-        // pressShortcut() helper has its own settle delay.
-        if (!indicator.bounds && mainWindow && !mainWindow.isDestroyed()) {
+        // to the previously-foreground window before the chord fires; runInput
+        // uses pressShortcut which has its own settle delay.
+        if (!indicator.coords && mainWindow && !mainWindow.isDestroyed()) {
           try {
             mainWindow.blur();
           } catch (_e) {}
         }
-        await input.pressShortcut(Array.isArray(indicator.keys) ? indicator.keys : []);
+        const v = indicator.value && typeof indicator.value === 'object' ? indicator.value : {};
+        await input.runInput({
+          clip: typeof v.clip === 'string' ? v.clip : undefined,
+          chords: Array.isArray(v.chords) ? v.chords : [],
+        });
       }
     } catch (err) {
       actionError = err;
-      logger.warn(`input action '${action}' failed:`, err.message);
+      logger.warn(`action '${action}' failed:`, err.message);
     }
-  } else if (action && requiresBounds && (!indicator || !indicator.bounds)) {
-    actionError = new Error(`Cannot perform '${action}': indicator ${indicatorId} has no bounds.`);
+  } else if (action && requiresCoords && (!indicator || !indicator.coords)) {
+    actionError = new Error(`Cannot perform '${action}': indicator ${indicatorId} has no coords.`);
     logger.warn(actionError.message);
   } else if (action && !indicator) {
     actionError = new Error(`Cannot perform '${action}': indicator ${indicatorId} not found in daemon state.`);
@@ -393,54 +398,34 @@ function rehydrateIndicators() {
 // Public RPC handlers (called by shim through IpcServer)
 // =============================================================================
 
-async function handlePerceive(params) {
-  const requested = Number.isFinite(params && params.overlayHwnd) ? params.overlayHwnd : 0;
-  const effectiveHwnd = requested || getOverlayHwnd();
+async function handlePerceive(_params) {
+  const effectiveHwnd = getOverlayHwnd();
   const result = await sidecar.call('perceive', { excludeHwnd: effectiveHwnd });
   if (!Array.isArray(result)) {
     throw new Error('Sidecar returned non-array perceive result.');
-  }
-  if (params && params.includeDiagnostics) {
-    return [
-      ...result,
-      {
-        type: '__perceive_diagnostics',
-        overlayHwndRequested: requested,
-        overlayHwndEffective: effectiveHwnd,
-        nodesCount: result.length,
-      },
-    ];
   }
   return result;
 }
 
 async function handleIndicate(params) {
-  const normalized = normalizeIndicator(params && params.indicator !== undefined ? params.indicator : params);
+  const normalized = normalizeIndicator(params && typeof params === 'object' && !Array.isArray(params) ? params : {});
   if (!normalized.id) {
     normalized.id = `ind-${crypto.randomBytes(6).toString('hex')}`;
   }
   const indicatorId = normalized.id;
-  const append = Boolean(normalized.append);
-  const awaitFlag = Boolean(normalized.await);
 
-  physicalBoundsToDipInPlace(normalized);
+  physicalCoordsToDipInPlace(normalized);
 
-  if (!append) {
-    indicators.clear();
-    sendRendererCommand('hideAll', {});
-  }
+  indicators.clear();
+  sendRendererCommand('hideAll', {});
   indicators.set(indicatorId, normalized);
   sendRendererCommand('indicate', { indicator: normalized });
-  // Pull keyboard focus to the overlay so the renderer's Tab handler fires
+  // Pull keyboard focus to the overlay so the renderer's Tab / Escape handlers fire
   // for the just-shown indicator. focus() is a no-op if the window is gone.
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
       mainWindow.focus();
     } catch (_e) {}
-  }
-
-  if (!awaitFlag) {
-    return { ok: true, indicator: normalized, result: null };
   }
 
   const result = await new Promise((resolve, reject) => {
@@ -450,7 +435,16 @@ async function handleIndicate(params) {
     }, AWAIT_RESOLUTION_TIMEOUT_MS);
     indicateResolutionWaiters.set(indicatorId, { resolve, reject, timer });
   });
-  return { ok: true, indicator: normalized, result };
+
+  await new Promise((r) => setTimeout(r, POST_RESOLUTION_PERCEIVE_DELAY_MS));
+  let perceiveNodes = [];
+  try {
+    perceiveNodes = await handlePerceive({});
+  } catch (err) {
+    logger.warn('post-indicate perceive failed:', err && err.message ? err.message : err);
+    perceiveNodes = [];
+  }
+  return { result, perceive: perceiveNodes };
 }
 
 function handleStatus() {

@@ -7,10 +7,11 @@
 // Shim <-> daemon JSON-RPC envelope.
 const SHIM_PROTOCOL_VERSION = 1;
 
-// Daemon <-> overlay renderer command envelope. v5 changes `keys` on the
-// `shortcut` indicator from a single chord (string[]) to a list of chord
-// steps (string[][]) executed in order with a fixed inter-step delay.
-const OVERLAY_PROTOCOL_VERSION = 5;
+// Daemon <-> overlay renderer command envelope. v7: compact indicator model
+// — flat fields type / coords ("x,y,w,h") / desc / value; value for `input` is
+// { clip?: string, chords: string[][] } (nut-js Key chord steps; optional clip
+// primes clipboard before chords, then restores prior text/plain in finally).
+const OVERLAY_PROTOCOL_VERSION = 7;
 
 // Daemon <-> sidecar JSON stdio envelope.
 const SIDECAR_PROTOCOL_VERSION = '1';
@@ -21,8 +22,7 @@ const INDICATOR_TYPES = Object.freeze([
   'wait',
   'action',
   'click',
-  'type',
-  'shortcut',
+  'input',
   'danger',
 ]);
 

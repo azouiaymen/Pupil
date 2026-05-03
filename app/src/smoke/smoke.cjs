@@ -3,7 +3,8 @@
 // Standalone smoke test:
 //   1. spawn the daemon
 //   2. connect over the named pipe
-//   3. call `status`, then `indicate` (no await), then `shutdown`
+//   3. call `status`, `perceive`, then `shutdown` (indicate always blocks until
+//      the user resolves the card — not included here to avoid hanging smoke)
 // Designed to be run with: node app/src/smoke/smoke.cjs
 
 const { spawnDaemon } = require('../shim/launcher.cjs');
@@ -29,13 +30,6 @@ async function main() {
 
   const perceive = await client.call('perceive', {});
   logger.info(`perceive: nodes=${Array.isArray(perceive) ? perceive.length : 'N/A'}`);
-
-  const ind = await client.call('indicate', {
-    indicator: { type: 'info', title: 'smoke', text: 'pupil-mcp smoke test', append: false, await: false },
-  });
-  logger.info('indicate:', JSON.stringify(ind));
-
-  await new Promise((r) => setTimeout(r, 1500));
 
   const shutdownRes = await client.call('shutdown').catch((err) => ({ error: err.message }));
   logger.info('shutdown:', JSON.stringify(shutdownRes));

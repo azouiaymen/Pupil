@@ -136,9 +136,28 @@ html, body, #overlay-root {
   line-height: 1.45;
 }
 
+.indicator-input-seq {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(232, 237, 245, 0.88);
+}
+
+.indicator-input-chord {
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .indicator-actions {
-  /* Footer controls anchor bottom-right. Skip looks like text; Next/Accept
-     look like primary chips with the Tab key-cap glyph. */
+  /* Footer: Skip + Esc keycap (click/input); Next/Accept + Tab (⇥) keycaps. */
   margin-top: 12px;
   display: flex;
   align-items: center;
@@ -167,13 +186,14 @@ html, body, #overlay-root {
   cursor: not-allowed;
 }
 
-/* Skip is a transparent text-only affordance: no background, no border. */
-.indicator-action-btn-skip {
+/* Skip on click/input: ghost until keyboard-selected (Shift+Tab), then same
+   primary chip as Next/Accept — "sniper" on the active foot. */
+.indicator-action-btn-skip.indicator-foot-ghost {
   color: rgba(248, 250, 252, 0.7);
   padding: 7px 6px;
 }
 
-.indicator-action-btn-skip:hover:not(:disabled) {
+.indicator-action-btn-skip.indicator-foot-ghost:hover:not(:disabled) {
   color: rgba(248, 250, 252, 0.95);
 }
 
@@ -191,14 +211,49 @@ html, body, #overlay-root {
   background: #ffffff;
 }
 
+/* Selected foot on dual-footer cards (Skip or Accept): same chip as Next. */
+.indicator-action-btn-skip.indicator-foot-selected {
+  background: rgba(255, 255, 255, 0.92);
+  color: #1a1a1a;
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+  padding: 7px 10px;
+}
+
+.indicator-action-btn-skip.indicator-foot-selected:hover:not(:disabled) {
+  background: #ffffff;
+}
+
+/* When Skip is selected, Accept drops to the light ghost treatment. */
+.indicator-action-btn-accept.indicator-foot-ghost {
+  background: transparent;
+  color: rgba(248, 250, 252, 0.72);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.indicator-action-btn-accept.indicator-foot-ghost:hover:not(:disabled) {
+  color: rgba(248, 250, 252, 0.95);
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .indicator-action-btn.is-pending {
   /* Mid-flight: spinner replaces the kbd; keep the chip readable but inert. */
   opacity: 0.85;
   cursor: progress;
 }
 
+/* Skip uses ghost/selected foot styles; once fired, match Next/Accept chip so the spinner reads clearly. */
+.indicator-action-btn-skip.is-pending {
+  background: rgba(255, 255, 255, 0.92);
+  color: #1a1a1a;
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+  padding: 7px 10px;
+}
+
 .indicator-kbd {
-  /* Mini keyboard cap rendered inside Next/Accept. */
+  /* Mini keyboard cap on primary actions (Next/Accept). */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -211,6 +266,37 @@ html, body, #overlay-root {
   font: 12px/1 ui-monospace, "Cascadia Mono", "Consolas", monospace;
   color: #222;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+}
+
+.indicator-action-btn-skip.indicator-foot-ghost .indicator-kbd-esc {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: rgba(248, 250, 252, 0.92);
+  box-shadow: none;
+  font-size: 10px;
+  padding: 0 5px;
+  min-width: auto;
+}
+
+/* Esc cap matches the ⇥ cap when Skip carries the primary chip. */
+.indicator-action-btn-skip.indicator-foot-selected .indicator-kbd-esc {
+  background: #fafafa;
+  border-color: rgba(0, 0, 0, 0.25);
+  color: #222;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+  font-size: 12px;
+  padding: 0 4px;
+  min-width: 18px;
+}
+
+.indicator-action-btn-accept.indicator-foot-ghost .indicator-kbd {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: rgba(248, 250, 252, 0.92);
+  box-shadow: none;
+  font-size: 10px;
+  padding: 0 5px;
+  min-width: auto;
 }
 
 .indicator-spinner {
@@ -257,12 +343,7 @@ html, body, #overlay-root {
   color: var(--indicator-accent);
 }
 
-.indicator-type {
-  --indicator-accent: #a855f7;
-  color: var(--indicator-accent);
-}
-
-.indicator-shortcut {
+.indicator-input {
   --indicator-accent: #06b6d4;
   color: var(--indicator-accent);
 }
