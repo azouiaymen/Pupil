@@ -8,7 +8,7 @@ const crypto = require('crypto');
 
 const { IpcServer } = require('../ipc/server.cjs');
 const { SidecarManager } = require('../sidecar/manager.cjs');
-const { normalizeIndicator } = require('./state.cjs');
+const { normalizeIndicator, parseCoordsString } = require('./state.cjs');
 const { OVERLAY_PROTOCOL_VERSION } = require('../common/protocol.cjs');
 const { daemonPipePath, runtimeRoot } = require('../common/paths.cjs');
 const input = require('./input.cjs');
@@ -47,6 +47,23 @@ const indicateResolutionWaiters = new Map();
 let sidecar = null;
 let ipcServer = null;
 const sessionId = `session-${crypto.randomBytes(6).toString('hex')}`;
+let loggedTestFocusBbox = false;
+
+/** When set (e.g. from perceive), every indicate uses this bbox for card/connector styling so all types can be compared on one control. */
+function applyTestFocusBboxIfConfigured(indicator) {
+  const raw = process.env.PUPIL_TEST_FOCUS_BBOX;
+  if (typeof raw !== 'string' || !raw.trim()) return;
+  try {
+    indicator.coords = parseCoordsString(raw.trim());
+    physicalCoordsToDipInPlace(indicator);
+    if (!loggedTestFocusBbox) {
+      loggedTestFocusBbox = true;
+      logger.info('PUPIL_TEST_FOCUS_BBOX is set; overlay highlight uses that rect for every indicate type.');
+    }
+  } catch (err) {
+    logger.warn('PUPIL_TEST_FOCUS_BBOX ignored:', err.message);
+  }
+}
 
 // =============================================================================
 // Runtime configuration (Electron paths must be set before app is ready)
@@ -99,6 +116,29 @@ function getVirtualBounds() {
       bottom: Number.NEGATIVE_INFINITY,
     }
   );
+}
+
+/** Primary display bounds in overlay window-local DIP (union origin subtracted). */
+function getPrimaryDisplayWindowRect() {
+  const primary = screen.getPrimaryDisplay();
+  const b = primary && primary.bounds ? primary.bounds : null;
+  if (!b) return null;
+  return {
+    x: Math.round(Number(b.x) - virtualOrigin.x),
+    y: Math.round(Number(b.y) - virtualOrigin.y),
+    w: Math.round(Number(b.width)),
+    h: Math.round(Number(b.height)),
+  };
+}
+
+function sendLayoutToRenderer() {
+  const primaryRect = getPrimaryDisplayWindowRect();
+  if (!primaryRect) return;
+  try {
+    sendRendererCommand('setLayout', { primaryRect });
+  } catch (_e) {
+    // Overlay window not ready yet; queued indicate will follow a later setLayout from ready/display events.
+  }
 }
 
 function getOverlayHwnd() {
@@ -257,6 +297,7 @@ ipcMain.on('overlay:event', (_event, envelope) => {
   const event = envelope.event;
   if (event === 'ready') {
     rendererReady = true;
+    sendLayoutToRenderer();
     flushPendingCommands();
     rehydrateIndicators();
     return;
@@ -290,6 +331,18 @@ function handleInteraction(payload) {
 
   if (payload.type === 'indicator_closed') {
     indicators.delete(indicatorId);
+  }
+}
+
+/** When a new indicate replaces the overlay, prior callers still await resolution; resolve them as skipped (no OS action). */
+function autoSkipPendingResolutions(reason) {
+  const label = typeof reason === 'string' && reason.length > 0 ? reason : 'unknown';
+  for (const [id, waiter] of [...indicateResolutionWaiters.entries()]) {
+    if (!waiter) continue;
+    clearTimeout(waiter.timer);
+    indicateResolutionWaiters.delete(id);
+    logger.info(`auto-skipped indicator ${id} (${label})`);
+    waiter.resolve('skipped');
   }
 }
 
@@ -415,7 +468,9 @@ async function handleIndicate(params) {
   const indicatorId = normalized.id;
 
   physicalCoordsToDipInPlace(normalized);
+  applyTestFocusBboxIfConfigured(normalized);
 
+  autoSkipPendingResolutions('replaced_by_new_indicate');
   indicators.clear();
   sendRendererCommand('hideAll', {});
   indicators.set(indicatorId, normalized);
@@ -471,6 +526,13 @@ function handleShutdown() {
 
 app.whenReady().then(async () => {
   createOverlayWindow();
+
+  const onDisplayLayoutChange = () => {
+    sendLayoutToRenderer();
+  };
+  screen.on('display-metrics-changed', onDisplayLayoutChange);
+  screen.on('display-added', onDisplayLayoutChange);
+  screen.on('display-removed', onDisplayLayoutChange);
 
   sidecar = new SidecarManager({ logger });
   sidecar.on('ready', (payload) => logger.info('sidecar ready pid=' + payload.pid));

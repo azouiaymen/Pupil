@@ -72,11 +72,11 @@ html, body, #overlay-root {
   width: 320px;
   min-height: 70px;
   border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--indicator-accent, #ffffff) 25%, transparent);
-  background: rgba(33, 33, 33, 0.88);
+  border: 1px solid color-mix(in srgb, var(--indicator-border, var(--indicator-ui, #5a5a5a)) 50%, transparent);
+  background: rgba(22, 22, 24, 0.93);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
   color: #f8fafc;
-  padding: 14px 16px;
+  padding: 16px 18px;
   pointer-events: auto;
 }
 
@@ -92,11 +92,11 @@ html, body, #overlay-root {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .indicator-icon {
-  color: var(--indicator-accent, currentColor);
+  color: var(--indicator-neon, currentColor);
   display: inline-flex;
   flex: 0 0 auto;
 }
@@ -124,15 +124,17 @@ html, body, #overlay-root {
 
 .indicator-title {
   margin: 0;
-  font-size: 17px;
-  line-height: 1.25;
-  color: var(--indicator-accent, #f8fafc);
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.28;
+  color: var(--indicator-neon, #f8fafc);
 }
 
 .indicator-text {
   margin: 10px 0 0;
-  color: #e8edf5;
-  font-size: 15px;
+  /* True neutral gray (R = G = B), no channel above another. */
+  color: #c8c8c8;
+  font-size: 14px;
   line-height: 1.45;
 }
 
@@ -140,45 +142,95 @@ html, body, #overlay-root {
   margin-top: 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  align-items: stretch;
   min-width: 0;
-  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
-  font-size: 12px;
   line-height: 1.35;
   color: rgba(232, 237, 245, 0.88);
 }
 
 .indicator-input-chord {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
   max-width: 100%;
+}
+
+.indicator-input-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.7em;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(18, 18, 22, 0.85);
+  color: #f8fafc;
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.04);
+  box-sizing: border-box;
+}
+
+.indicator-input-sep {
+  color: rgba(248, 250, 252, 0.55);
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.indicator-input-clip {
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+  color: rgba(232, 237, 245, 0.78);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .indicator-actions {
-  /* Footer: Skip + Esc keycap (click/input); Next/Accept + Tab (⇥) keycaps. */
-  margin-top: 12px;
+  /* Footer: Skip + Esc (left); Next/Accept + Tab (⇥) on the right — margin-right:auto on skip. */
+  margin-top: 14px;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 10px;
+}
+
+.indicator-action-btn-skip {
+  margin-right: auto;
 }
 
 .indicator-action-btn {
   pointer-events: auto;
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
+  justify-content: center;
   gap: 8px;
+  box-sizing: border-box;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
   color: #f8fafc;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
-  padding: 7px 10px;
+  min-height: 38px;
+  padding: 8px 14px;
   cursor: pointer;
+}
+
+.indicator-action-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
 }
 
 .indicator-action-btn:disabled {
@@ -186,122 +238,144 @@ html, body, #overlay-root {
   cursor: not-allowed;
 }
 
-/* Skip on click/input: ghost until keyboard-selected (Shift+Tab), then same
-   primary chip as Next/Accept — "sniper" on the active foot. */
+/* Skip: ghost until keyboard-selected (Shift+Tab), then same primary chip as
+   Next/Accept — "sniper" on the active foot. */
 .indicator-action-btn-skip.indicator-foot-ghost {
   color: rgba(248, 250, 252, 0.7);
-  padding: 7px 6px;
+  /* Flush text with card content: no phantom 1px border box or extra left inset. */
+  border-width: 0;
+  padding: 8px 10px 8px 0;
 }
 
 .indicator-action-btn-skip.indicator-foot-ghost:hover:not(:disabled) {
   color: rgba(248, 250, 252, 0.95);
 }
 
-/* Next and Accept share a primary "whitish chip" treatment. */
-.indicator-action-btn-next,
-.indicator-action-btn-accept {
-  background: rgba(255, 255, 255, 0.92);
-  color: #1a1a1a;
-  border-color: rgba(0, 0, 0, 0.1);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
+.indicator-action-btn-skip.indicator-foot-ghost:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--indicator-neon, #cbd5e1) 50%, transparent);
+  outline-offset: 2px;
 }
 
-.indicator-action-btn-next:hover:not(:disabled),
-.indicator-action-btn-accept:hover:not(:disabled) {
-  background: #ffffff;
-}
-
-/* Selected foot on dual-footer cards (Skip or Accept): same chip as Next. */
+/* Primary chip: default = darkened --indicator-ui + white text. info/warning set --indicator-chip-* for light chips + black text. */
+.indicator-action-btn-next.indicator-foot-selected,
+.indicator-action-btn-accept.indicator-foot-selected,
 .indicator-action-btn-skip.indicator-foot-selected {
-  background: rgba(255, 255, 255, 0.92);
-  color: #1a1a1a;
-  border-color: rgba(0, 0, 0, 0.1);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
-  padding: 7px 10px;
+  background: var(
+    --indicator-chip-fill,
+    color-mix(in srgb, var(--indicator-ui) 72%, #0a0a0c)
+  );
+  color: var(--indicator-chip-text, #fff);
+  border-width: 1px;
+  border-color: var(
+    --indicator-chip-border,
+    color-mix(in srgb, var(--indicator-ui) 52%, #000)
+  );
+  box-shadow: var(--indicator-chip-shadow, 0 1px 0 color-mix(in srgb, var(--indicator-ui) 40%, rgba(0, 0, 0, 0.55)));
 }
 
+.indicator-action-btn-next.indicator-foot-selected:hover:not(:disabled),
+.indicator-action-btn-accept.indicator-foot-selected:hover:not(:disabled),
 .indicator-action-btn-skip.indicator-foot-selected:hover:not(:disabled) {
-  background: #ffffff;
+  filter: brightness(1.08);
 }
 
-/* When Skip is selected, Accept drops to the light ghost treatment. */
-.indicator-action-btn-accept.indicator-foot-ghost {
+/* Selected-foot Skip keeps full chip padding (ghost uses tighter horizontal padding). */
+.indicator-action-btn-skip.indicator-foot-selected {
+  padding: 8px 14px;
+}
+
+/* When Skip is selected, primary (Accept/Next) drops to the light ghost treatment. */
+.indicator-action-btn-accept.indicator-foot-ghost,
+.indicator-action-btn-next.indicator-foot-ghost {
   background: transparent;
   color: rgba(248, 250, 252, 0.72);
   border-color: transparent;
   box-shadow: none;
 }
 
-.indicator-action-btn-accept.indicator-foot-ghost:hover:not(:disabled) {
+.indicator-action-btn-accept.indicator-foot-ghost:hover:not(:disabled),
+.indicator-action-btn-next.indicator-foot-ghost:hover:not(:disabled) {
   color: rgba(248, 250, 252, 0.95);
   background: rgba(255, 255, 255, 0.06);
 }
 
 .indicator-action-btn.is-pending {
-  /* Mid-flight: spinner replaces the kbd; keep the chip readable but inert. */
+  /* Mid-flight: spinner replaces the kbd; chip colors stay from foot-selected / foot-ghost. */
   opacity: 0.85;
   cursor: progress;
 }
 
-/* Skip uses ghost/selected foot styles; once fired, match Next/Accept chip so the spinner reads clearly. */
-.indicator-action-btn-skip.is-pending {
-  background: rgba(255, 255, 255, 0.92);
-  color: #1a1a1a;
-  border-color: rgba(0, 0, 0, 0.1);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
-  padding: 7px 10px;
-}
-
 .indicator-kbd {
-  /* Mini keyboard cap on primary actions (Next/Accept). */
+  /* Inline hint; tab = SVG (no text metrics), Esc = small cap — both flex-center with label. */
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 4px;
-  border: 1px solid rgba(0, 0, 0, 0.25);
-  border-radius: 4px;
-  background: #fafafa;
-  font: 12px/1 ui-monospace, "Cascadia Mono", "Consolas", monospace;
-  color: #222;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+  flex-shrink: 0;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: currentColor;
+  box-shadow: none;
+  vertical-align: middle;
+}
+
+/* Tab icon: SVG has no text baseline, so re-center across the button cross-axis. */
+.indicator-kbd-tab {
+  line-height: 0;
+  align-self: center;
+}
+
+.indicator-kbd-tab svg {
+  display: block;
+  width: 1.12em;
+  height: 1.12em;
+}
+
+/* Esc: outline cap; baseline of its inner text aligns with the label's baseline. */
+.indicator-kbd.indicator-kbd-esc {
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  font-weight: 500;
+  line-height: 1;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 5px;
+  padding: 0.4em 0.55em;
 }
 
 .indicator-action-btn-skip.indicator-foot-ghost .indicator-kbd-esc {
-  background: rgba(255, 255, 255, 0.1);
+  background: transparent;
   border-color: rgba(255, 255, 255, 0.22);
   color: rgba(248, 250, 252, 0.92);
-  box-shadow: none;
-  font-size: 10px;
-  padding: 0 5px;
-  min-width: auto;
+  font-size: 0.82em;
 }
 
-/* Esc cap matches the ⇥ cap when Skip carries the primary chip. */
+/* Esc keeps its cap outline when Skip carries the primary chip. */
 .indicator-action-btn-skip.indicator-foot-selected .indicator-kbd-esc {
-  background: #fafafa;
-  border-color: rgba(0, 0, 0, 0.25);
-  color: #222;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
-  font-size: 12px;
-  padding: 0 4px;
-  min-width: 18px;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.45);
+  color: #fff;
+  font-size: 0.86em;
 }
 
-.indicator-action-btn-accept.indicator-foot-ghost .indicator-kbd {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.22);
+/* Light chips (info / warning): Esc keycap reads on pale fill. */
+.indicator-card.indicator-info .indicator-action-btn-skip.indicator-foot-selected .indicator-kbd-esc,
+.indicator-card.indicator-warning .indicator-action-btn-skip.indicator-foot-selected .indicator-kbd-esc {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(0, 0, 0, 0.18);
+  color: #171717;
+}
+
+.indicator-action-btn-accept.indicator-foot-ghost .indicator-kbd,
+.indicator-action-btn-next.indicator-foot-ghost .indicator-kbd {
   color: rgba(248, 250, 252, 0.92);
-  box-shadow: none;
-  font-size: 10px;
-  padding: 0 5px;
-  min-width: auto;
 }
 
 .indicator-spinner {
-  /* CSS-only spinner; currentColor keeps it readable on the white-ish chip. */
+  /* CSS-only spinner; centered on cross-axis since it has no text baseline. */
   display: inline-block;
+  align-self: center;
   width: 14px;
   height: 14px;
   border-radius: 50%;
@@ -317,38 +391,100 @@ html, body, #overlay-root {
   }
 }
 
-/* Type accents: bbox, connector, card border, and header icon share --indicator-accent. */
-.indicator-info {
-  --indicator-accent: #aeb6c7;
-  color: var(--indicator-accent);
+/* Per-type: --indicator-neon (bbox / connector / icon / title); --indicator-ui + optional --indicator-border for frame;
+   chips use darkened --indicator-ui except info/warning (--indicator-chip-* = light fill + dark text, like green 500/600 vibe). */
+.indicator-bbox.indicator-info,
+.indicator-connector.indicator-info,
+.indicator-card.indicator-info {
+  /* Very light neon line; chip almost white (vibrant vs line); border muted; chip text black. */
+  --indicator-neon: #f0f0f0;
+  --indicator-border: #6e6e6e;
+  --indicator-ui: #6e6e6e;
+  --indicator-chip-fill: #fafafa;
+  --indicator-chip-text: #141414;
+  --indicator-chip-border: rgba(0, 0, 0, 0.14);
+  --indicator-chip-shadow: 0 1px 0 rgba(0, 0, 0, 0.1);
 }
 
-.indicator-warning {
-  --indicator-accent: #eab308;
-  color: var(--indicator-accent);
+.indicator-bbox.indicator-info,
+.indicator-connector.indicator-info {
+  color: var(--indicator-neon);
 }
 
-.indicator-wait {
-  --indicator-accent: #14b8a6;
-  color: var(--indicator-accent);
+.indicator-bbox.indicator-warning,
+.indicator-connector.indicator-warning,
+.indicator-card.indicator-warning {
+  /* Neon = saturated yellow (line / icon / title); chip one step lighter but still clearly yellow + dark text. */
+  --indicator-neon: #eab308;
+  --indicator-border: #a16207;
+  --indicator-ui: #a16207;
+  --indicator-chip-fill: #facc15;
+  --indicator-chip-text: #1c1917;
+  --indicator-chip-border: rgba(113, 63, 18, 0.35);
+  --indicator-chip-shadow: 0 1px 0 rgba(0, 0, 0, 0.12);
 }
 
-.indicator-action {
-  --indicator-accent: #4f6ae8;
-  color: var(--indicator-accent);
+.indicator-bbox.indicator-warning,
+.indicator-connector.indicator-warning {
+  color: var(--indicator-neon);
 }
 
-.indicator-click {
-  --indicator-accent: #22c55e;
-  color: var(--indicator-accent);
+.indicator-bbox.indicator-wait,
+.indicator-connector.indicator-wait,
+.indicator-card.indicator-wait {
+  --indicator-neon: #14b8a6;
+  --indicator-ui: #0d9488;
 }
 
-.indicator-input {
-  --indicator-accent: #06b6d4;
-  color: var(--indicator-accent);
+.indicator-bbox.indicator-wait,
+.indicator-connector.indicator-wait {
+  color: var(--indicator-neon);
 }
 
-.indicator-danger {
-  --indicator-accent: #ef4444;
-  color: var(--indicator-accent);
+.indicator-bbox.indicator-action,
+.indicator-connector.indicator-action,
+.indicator-card.indicator-action {
+  --indicator-neon: #3b82f6;
+  --indicator-ui: #2563eb;
+}
+
+.indicator-bbox.indicator-action,
+.indicator-connector.indicator-action {
+  color: var(--indicator-neon);
+}
+
+.indicator-bbox.indicator-click,
+.indicator-connector.indicator-click,
+.indicator-card.indicator-click {
+  --indicator-neon: #22c55e;
+  --indicator-ui: #16a34a;
+}
+
+.indicator-bbox.indicator-click,
+.indicator-connector.indicator-click {
+  color: var(--indicator-neon);
+}
+
+.indicator-bbox.indicator-input,
+.indicator-connector.indicator-input,
+.indicator-card.indicator-input {
+  --indicator-neon: #8b5cf6;
+  --indicator-ui: #7c3aed;
+}
+
+.indicator-bbox.indicator-input,
+.indicator-connector.indicator-input {
+  color: var(--indicator-neon);
+}
+
+.indicator-bbox.indicator-danger,
+.indicator-connector.indicator-danger,
+.indicator-card.indicator-danger {
+  --indicator-neon: #ef4444;
+  --indicator-ui: #dc2626;
+}
+
+.indicator-bbox.indicator-danger,
+.indicator-connector.indicator-danger {
+  color: var(--indicator-neon);
 }

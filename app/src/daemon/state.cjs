@@ -110,4 +110,4 @@ function normalizeIndicator(payload) {
   return normalized;
 }
 
-module.exports = { normalizeIndicator };
+module.exports = { normalizeIndicator, parseCoordsString };

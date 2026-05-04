@@ -1,6 +1,8 @@
 const PROTOCOL_VERSION = 7;
 const overlayRoot = document.getElementById('overlay-root');
 const indicators = [];
+/** Primary display rect in window-local DIP; set by daemon `setLayout` for no-bounds card placement. */
+let primaryRect = null;
 let indicatorSequence = 0;
 let interactiveState = false;
 // Shared geometry constants used by both card placement and connector routing.
@@ -32,10 +34,25 @@ const TYPE_META = {
   danger: { icon: 'Skull' },
 };
 
-// Action buttons rendered per indicator type. Types that map to an OS-level
-// effect (click/input) get a Skip + Accept pair; everything else gets a single
-// Next button. Accept variants carry a non-null `action` so the daemon knows
-// what input automation to perform; Next is a pure resolution.
+/** Shown when `desc` is omitted or blank so the card still has body copy for each type. */
+const PLACEHOLDER_DESC_BY_TYPE = {
+  click: 'Left-click here.',
+  input: 'Type or paste the keys shown below.',
+  info: 'No extra details for this step.',
+  warning: 'Review this warning before continuing.',
+  wait: 'Wait until this step is done.',
+  action: 'Confirm when you are ready to continue.',
+  danger: 'Review carefully before you continue.',
+};
+
+function bodyTextForIndicator(indicator) {
+  const raw = indicator.desc;
+  if (typeof raw === 'string' && raw.trim().length > 0) return raw.trim();
+  return PLACEHOLDER_DESC_BY_TYPE[indicator.type] || PLACEHOLDER_DESC_BY_TYPE.info;
+}
+
+// Action buttons per type: every type has Skip + primary (Accept for click/input, Next otherwise).
+// Accept carries a non-null `action` so the daemon knows what OS automation to run; Next is pure resolution.
 const BUTTON_LAYOUTS = {
   click: [
     { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: true },
@@ -45,11 +62,26 @@ const BUTTON_LAYOUTS = {
     { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: true },
     { kind: 'accept', label: 'Accept', result: 'done', action: 'input', keepVisible: true },
   ],
-  info: [{ kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true }],
-  warning: [{ kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true }],
-  wait: [{ kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true }],
-  action: [{ kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true }],
-  danger: [{ kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true }],
+  info: [
+    { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: true },
+    { kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true },
+  ],
+  warning: [
+    { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: true },
+    { kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true },
+  ],
+  wait: [
+    { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: true },
+    { kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true },
+  ],
+  action: [
+    { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: true },
+    { kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true },
+  ],
+  danger: [
+    { kind: 'skip', label: 'Skip', result: 'skipped', action: null, keepVisible: true },
+    { kind: 'next', label: 'Next', result: 'done', action: null, keepVisible: true },
+  ],
 };
 
 function buttonsFor(type) {
@@ -66,13 +98,23 @@ function skipButtonFor(type) {
   return buttonsFor(type).find((btn) => btn.kind === 'skip') || null;
 }
 
+/** Accept or Next — whichever is the non-Skip primary for this type. */
+function primaryActionKind(type) {
+  const layout = buttonsFor(type);
+  const btn = layout.find((b) => b.kind === 'accept') || layout.find((b) => b.kind === 'next');
+  return btn ? btn.kind : null;
+}
+
 function isDualFooterType(type) {
-  return type === 'click' || type === 'input';
+  const layout = buttonsFor(type);
+  return layout.some((b) => b.kind === 'skip') && layout.length >= 2;
 }
 
 function footerFocusKind(indicator) {
   if (!isDualFooterType(indicator.type)) return null;
-  return indicator._footerFocus === 'skip' ? 'skip' : 'accept';
+  if (indicator._footerFocus === 'skip') return 'skip';
+  const pk = primaryActionKind(indicator.type);
+  return pk || null;
 }
 
 function applyFooterFocusState(actions, indicator) {
@@ -119,18 +161,37 @@ function abbreviateKey(name) {
   return table[name] || name;
 }
 
-function formatChordLine(chord, clipPlain) {
-  if (isPasteChord(chord)) {
-    if (typeof clipPlain === 'string' && clipPlain.length > 0) {
-      const excerpt =
-        clipPlain.length > INPUT_CLIP_EXCERPT_MAX_CHARS
-          ? `${clipPlain.slice(0, INPUT_CLIP_EXCERPT_MAX_CHARS)}…`
-          : clipPlain;
-      return `Ctrl+V · "${excerpt}"`;
+function appendChordGlyphs(target, chord) {
+  const labels = chord.map((k) => abbreviateKey(k));
+  for (let i = 0; i < labels.length; i += 1) {
+    const kbd = document.createElement('kbd');
+    kbd.className = 'indicator-input-key';
+    kbd.textContent = labels[i];
+    target.appendChild(kbd);
+    if (i < labels.length - 1) {
+      const sep = document.createElement('span');
+      sep.className = 'indicator-input-sep';
+      sep.setAttribute('aria-hidden', 'true');
+      sep.textContent = '+';
+      target.appendChild(sep);
     }
-    return 'Ctrl+V';
   }
-  return chord.map(abbreviateKey).join('+');
+}
+
+function appendClipExcerpt(target, clipPlain) {
+  const sep = document.createElement('span');
+  sep.className = 'indicator-input-sep';
+  sep.setAttribute('aria-hidden', 'true');
+  sep.textContent = '·';
+  target.appendChild(sep);
+  const excerpt =
+    clipPlain.length > INPUT_CLIP_EXCERPT_MAX_CHARS
+      ? `${clipPlain.slice(0, INPUT_CLIP_EXCERPT_MAX_CHARS)}…`
+      : clipPlain;
+  const clipSpan = document.createElement('span');
+  clipSpan.className = 'indicator-input-clip';
+  clipSpan.textContent = `"${excerpt}"`;
+  target.appendChild(clipSpan);
 }
 
 function buildInputSequenceBlock(indicator) {
@@ -142,10 +203,13 @@ function buildInputSequenceBlock(indicator) {
   wrap.className = 'indicator-input-seq';
   for (const chord of v.chords) {
     if (!Array.isArray(chord) || chord.length === 0) continue;
-    const line = document.createElement('div');
-    line.className = 'indicator-input-chord';
-    line.textContent = formatChordLine(chord, clip);
-    wrap.appendChild(line);
+    const group = document.createElement('div');
+    group.className = 'indicator-input-chord';
+    appendChordGlyphs(group, chord);
+    if (isPasteChord(chord) && clip.length > 0) {
+      appendClipExcerpt(group, clip);
+    }
+    wrap.appendChild(group);
   }
   return wrap.childElementCount > 0 ? wrap : null;
 }
@@ -161,7 +225,7 @@ function createIcon(iconName) {
   const lucide = window.lucide;
   const iconNode = lucide && lucide.icons ? lucide.icons[iconName] : null;
   if (iconNode && lucide && typeof lucide.createElement === 'function') {
-    const svg = lucide.createElement(iconNode, { width: 18, height: 18, 'stroke-width': 2 });
+    const svg = lucide.createElement(iconNode, { width: 24, height: 24, 'stroke-width': 2 });
     icon.appendChild(svg);
     return icon;
   }
@@ -634,12 +698,31 @@ function bindCardDrag(card, closeButton, indicator, connector) {
 }
 
 function createKbdGlyph() {
-  // Inline ⇥ keycap; replaced by a CSS spinner once the button fires.
-  const kbd = document.createElement('kbd');
-  kbd.className = 'indicator-kbd';
-  kbd.textContent = '⇥';
-  kbd.setAttribute('aria-hidden', 'true');
-  return kbd;
+  // Inline Tab hint as SVG so it is not dependent on font glyph support.
+  const glyph = document.createElement('span');
+  glyph.className = 'indicator-kbd indicator-kbd-tab';
+  glyph.setAttribute('aria-hidden', 'true');
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2.4');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  line.setAttribute('d', 'M4 12h13');
+  const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  arrow.setAttribute('d', 'm13 8 4 4-4 4');
+  const stop = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  stop.setAttribute('d', 'M20 5v14');
+
+  svg.appendChild(line);
+  svg.appendChild(arrow);
+  svg.appendChild(stop);
+  glyph.appendChild(svg);
+  return glyph;
 }
 
 function createEscKbdGlyph() {
@@ -689,14 +772,19 @@ function buildActionRow(indicator) {
 
 function applyResolvedState(actions, indicator) {
   if (!indicator._resolved) return;
-  for (const btn of actions.querySelectorAll('.indicator-action-btn')) {
-    btn.classList.remove('indicator-foot-selected', 'indicator-foot-ghost');
+  const resolvedKind = String(indicator._resolvedKind);
+  const buttons = [...actions.querySelectorAll('.indicator-action-btn')];
+  for (const btn of buttons) {
     btn.disabled = true;
-    if (btn.dataset.kind === indicator._resolvedKind) {
-      btn.classList.add('is-pending');
-      const kbd = btn.querySelector('.indicator-kbd');
-      if (kbd) kbd.replaceWith(createSpinner());
-    }
+    btn.classList.remove('is-pending');
+  }
+  for (const btn of buttons) {
+    const kind = btn.getAttribute('data-kind');
+    const isFired = kind != null && String(kind) === resolvedKind;
+    if (!isFired) continue;
+    btn.classList.add('is-pending');
+    const kbd = btn.querySelector('.indicator-kbd');
+    if (kbd) kbd.replaceWith(createSpinner());
   }
 }
 
@@ -731,7 +819,12 @@ function render() {
 
       applyCardPosition(card, indicator, computeCardLeftTop(indicator.coords));
     } else {
-      applyCardPosition(card, indicator, { left: 24, top: 24 });
+      const cx = primaryRect ? primaryRect.x + primaryRect.w / 2 : window.innerWidth / 2;
+      const cy = primaryRect ? primaryRect.y + primaryRect.h / 2 : window.innerHeight / 2;
+      applyCardPosition(card, indicator, {
+        left: cx - CARD_WIDTH_PX / 2,
+        top: cy - TOOLTIP_ESTIMATED_HEIGHT_PX / 2,
+      });
     }
 
     const header = document.createElement('header');
@@ -756,15 +849,11 @@ function render() {
     header.appendChild(titleWrap);
     header.appendChild(closeButton);
     card.appendChild(header);
-    const connector = createConnector(indicator, card);
-    bindCardDrag(card, closeButton, indicator, connector);
 
-    if (indicator.desc) {
-      const text = document.createElement('p');
-      text.className = 'indicator-text';
-      text.textContent = indicator.desc;
-      card.appendChild(text);
-    }
+    const text = document.createElement('p');
+    text.className = 'indicator-text';
+    text.textContent = bodyTextForIndicator(indicator);
+    card.appendChild(text);
 
     const inputSeq = buildInputSequenceBlock(indicator);
     if (inputSeq) {
@@ -775,6 +864,8 @@ function render() {
     card.appendChild(actions);
 
     overlayRoot.appendChild(card);
+    const connector = createConnector(indicator, card);
+    bindCardDrag(card, closeButton, indicator, connector);
     if (connector) {
       connector.dataset.id = indicator._id;
       overlayRoot.appendChild(connector);
@@ -795,6 +886,26 @@ window.overlayApi.onCommand((message) => {
         event: 'error',
         payload: { reason: 'protocol_mismatch', received: message.protocolVersion },
       });
+      return;
+    }
+    if (message.command === 'setLayout') {
+      const pr = message.payload && message.payload.primaryRect;
+      if (
+        pr &&
+        typeof pr.x === 'number' &&
+        typeof pr.y === 'number' &&
+        typeof pr.w === 'number' &&
+        typeof pr.h === 'number' &&
+        Number.isFinite(pr.x) &&
+        Number.isFinite(pr.y) &&
+        Number.isFinite(pr.w) &&
+        Number.isFinite(pr.h) &&
+        pr.w > 0 &&
+        pr.h > 0
+      ) {
+        primaryRect = { x: pr.x, y: pr.y, w: pr.w, h: pr.h };
+        render();
+      }
       return;
     }
     if (message.command === 'hideAll') {
@@ -819,7 +930,7 @@ window.overlayApi.onCommand((message) => {
       indicators.push({
         ...indicator,
         _id: indicator.id || `indicator-${indicatorSequence++}`,
-        _footerFocus: isDualFooterType(indicator.type) ? 'accept' : undefined,
+        _footerFocus: isDualFooterType(indicator.type) ? primaryActionKind(indicator.type) : undefined,
       });
       render();
       return;
@@ -850,10 +961,11 @@ window.addEventListener('keydown', (event) => {
     // Suppress default focus-traversal while indicators are up.
     event.preventDefault();
     event.stopPropagation();
-    // Shift+Tab toggles Skip vs Accept on click/input so the primary chip
-    // ("sniper") can sit on either foot; Tab then fires the selected one.
+    // Shift+Tab toggles Skip vs primary (Accept/Next) so the chip can sit on either foot; Tab fires the selected one.
     if (event.shiftKey && isDualFooterType(target.type)) {
-      target._footerFocus = footerFocusKind(target) === 'skip' ? 'accept' : 'skip';
+      const cur = footerFocusKind(target);
+      const pk = primaryActionKind(target.type);
+      target._footerFocus = cur === 'skip' ? pk : 'skip';
       updateFooterFocusVisual(target);
       return;
     }
@@ -867,11 +979,12 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key === 'Escape') {
+    // Always resolves Skip (not the keyboard-focused foot). Tab uses footerFocusKind.
     const skipButton = skipButtonFor(target.type);
     if (!skipButton) return;
     event.preventDefault();
     event.stopPropagation();
-    fireResolution(target, skipButton);
+    fireResolution(target, { ...skipButton, kind: 'skip' });
   }
 });
 
