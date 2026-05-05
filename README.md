@@ -48,6 +48,8 @@ The Python MCP server lives in `mcp/main.py` and exposes these tools:
 - `desc` — optional extra copy; omit unless it adds information the highlight does not (do not repeat the control label).
 - `value` — **required** for `input` only: object `{ clip?: string, chords: string[][] }`. `chords` is a non-empty list of chord steps (nut-js `Key` names per chord, modifiers first, ~50ms between steps). Optional `clip`: before chords run, the daemon saves the current plain-text clipboard, writes `clip`, runs `chords` (typically including `Ctrl+V`), then restores the saved text in a `finally` so failures do not leave `clip` on the clipboard. **Accept on `click`** performs a single OS click at the **center** of the `coords` bbox. **Accept on `input` with `coords`** does the same center click first to focus, then runs clipboard + chords as above; **without `coords`**, the daemon blurs the overlay and sends chords to the previous foreground window (best-effort).
 
+**Automation preference:** prioritize **`click`** on a control listed in `perceive` over **`input`** with keyboard shortcuts when both achieve the same result (for example click **Save** instead of Ctrl+S, **OK** instead of Enter). Use **`input`** for typing and paste, shortcuts with no reliable on-screen target, or when the CSV has no suitable row.
+
 Every `indicate` call **replaces** any prior card and **blocks** until the user resolves it. The card header label is derived from `type`. Footer buttons:
 
 - `info` / `warning` / `wait` / `action` / `danger`: **Next** only (Tab). Resolves `"done"`.

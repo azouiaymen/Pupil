@@ -36,10 +36,14 @@ const SHIM_METHODS = Object.freeze({
   SHUTDOWN: 'shutdown',
 });
 
+/** Daemon `handleIndicate` wait, overlay countdown, and shim IPC timeout for `indicate` must stay aligned. */
+const AWAIT_RESOLUTION_TIMEOUT_MS = 30000;
+
 module.exports = {
   SHIM_PROTOCOL_VERSION,
   OVERLAY_PROTOCOL_VERSION,
   SIDECAR_PROTOCOL_VERSION,
   INDICATOR_TYPES,
   SHIM_METHODS,
+  AWAIT_RESOLUTION_TIMEOUT_MS,
 };

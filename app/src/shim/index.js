@@ -8,7 +8,7 @@ const { IpcClient } = require('../ipc/client.cjs');
 const { spawnDaemon } = require('./launcher.cjs');
 const { perceiveToCompactCsv, INDICATE_PERCEIVE_NAME_MAX_CHARS } = require('./postprocess.cjs');
 const { daemonPipePath } = require('../common/paths.cjs');
-const { INDICATOR_TYPES } = require('../common/protocol.cjs');
+const { INDICATOR_TYPES, AWAIT_RESOLUTION_TIMEOUT_MS } = require('../common/protocol.cjs');
 
 // Stderr is the only safe channel; stdout belongs to the MCP transport.
 const logger = {
@@ -57,6 +57,9 @@ async function ensureDaemonConnection() {
 
 async function callDaemon(method, params) {
   const client = await ensureDaemonConnection();
+  if (method === 'indicate') {
+    return client.call(method, params, { timeoutMs: AWAIT_RESOLUTION_TIMEOUT_MS });
+  }
   return client.call(method, params);
 }
 
@@ -182,7 +185,7 @@ async function main() {
         '- value: required for input only: object { clip?: string, chords: string[][] }.',
         '  - chords: non-empty nut-js chord steps (modifiers first per chord; ~50ms between steps). Put every step for one intended outcome in one chords array (one indicate) — do not split a shortcut sequence across multiple indicate calls when one list of chord arrays suffices.',
         '  - clip: optional; when set, daemon saves clipboard text, writes clip, runs chords (often include Ctrl+V), restores prior text in finally.',
-        'Prefer type click over input when perceive CSV lists a control (button, link, menu item, etc.) that achieves the same result as a keyboard shortcut; avoid input/chords for actions you can do with click on that target.',
+        'Prioritize click over keyboard shortcuts: use type click with coords from perceive whenever the CSV shows a control (button, link, menu item, tab, tree row, etc.) that achieves the same outcome as a chord (Save vs Ctrl+S, Open vs Ctrl+O, OK vs Enter, menu paths vs Alt+letters). Use input for real typing or paste, global shortcuts without a listed target, or when no reliable clickable row exists; do not use input/chords to mimic an action you could take with click on that target.',
         'Buttons: Next (Tab) for info/warning/wait/action/danger; Skip (Escape) + Accept (Tab) for click/input. Accept runs OS action where applicable.',
         'After Accept/Next the card shows a spinner until the next indicate clears it.',
         'Returns JSON { result, perceive }: result is "done" or "skipped"; perceive is compact CSV like the perceive tool (post-action snapshot, ~50ms after resolution), except the name column is truncated after ' +

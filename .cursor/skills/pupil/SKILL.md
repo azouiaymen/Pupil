@@ -1,9 +1,11 @@
 ---
 name: pupil
-description: Operates desktop applications through the Pupil MCP server by iterating perceive then indicate then accept, repeatedly, until the user's task is complete. Use whenever Pupil's `perceive` and `indicate` tools are available, or when the user asks to automate a Windows GUI, click or send keyboard input into another application, run a multi-step desktop workflow, or guide a human through one step at a time.
+description: Operates desktop applications through the Pupil MCP server by iterating perceive then indicate then accept, repeatedly, until the user's task is complete. Prefer clicking visible controls from `perceive` over keyboard shortcuts when both achieve the same outcome. Use whenever Pupil's `perceive` and `indicate` tools are available, or when the user asks to automate a Windows GUI, click or send keyboard input into another application, run a multi-step desktop workflow, or guide a human through one step at a time.
 ---
 
 # Using Pupil
+
+**Default:** prioritize **`click`** on a listed control over **`input`** with keyboard shortcuts when the CSV exposes a target that does the same thing (Save vs Ctrl+S, OK vs Enter, and so on). The sections below spell out when to use each.
 
 Pupil exposes two MCP tools — `perceive` (read the current UI, **no arguments**)
 and `indicate` (flat payload: `type`, optional `coords`, optional `desc`,

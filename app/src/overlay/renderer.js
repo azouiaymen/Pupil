@@ -3,6 +3,8 @@ const overlayRoot = document.getElementById('overlay-root');
 const indicators = [];
 /** Primary display rect in window-local DIP; set by daemon `setLayout` for no-bounds card placement. */
 let primaryRect = null;
+/** Per-monitor work areas in window-local DIP; set by daemon `setLayout` for card clamping. */
+let layoutDisplays = null;
 let indicatorSequence = 0;
 let interactiveState = false;
 // Shared geometry constants used by both card placement and connector routing.
@@ -11,8 +13,13 @@ const CARD_GAP_PX = 24;
 const TOOLTIP_ESTIMATED_HEIGHT_PX = 132;
 const CARD_WIDTH_PX = 320;
 const VIEWPORT_MARGIN_PX = 12;
+/** Fallback when daemon omits `awaitResolutionTimeoutMs` on `indicate` (matches `AWAIT_RESOLUTION_TIMEOUT_MS` in protocol.cjs). */
+const DEFAULT_AWAIT_RESOLUTION_TIMEOUT_MS = 30000;
 // In-overlay preview of `value.clip` on Ctrl+V lines (CSS ellipsis also applies).
 const INPUT_CLIP_EXCERPT_MAX_CHARS = 80;
+
+/** Updates `.indicator-auto-skip` labels once per second while any card awaits resolution. */
+let autoSkipIntervalId = null;
 
 const TYPE_LABELS = {
   info: 'Info',
@@ -251,6 +258,45 @@ function measureBboxScreenCenter(indicatorId) {
   };
 }
 
+function formatAutoSkipLabel(indicator) {
+  if (typeof indicator._autoSkipEndsAt !== 'number') return '';
+  const remaining = indicator._autoSkipEndsAt - Date.now();
+  const sec = Math.max(0, Math.ceil(remaining / 1000));
+  return `Auto-skip in ${sec}s`;
+}
+
+function updateAutoSkipLabelText(indicator) {
+  const span = overlayRoot.querySelector(`.indicator-auto-skip[data-indicator-id="${indicator._id}"]`);
+  if (!span) return;
+  span.textContent = formatAutoSkipLabel(indicator);
+}
+
+function refreshAutoSkipTicker() {
+  const needsTicker = indicators.some(
+    (i) => !i._resolved && typeof i._autoSkipEndsAt === 'number',
+  );
+  if (!needsTicker && autoSkipIntervalId != null) {
+    clearInterval(autoSkipIntervalId);
+    autoSkipIntervalId = null;
+    return;
+  }
+  if (needsTicker && autoSkipIntervalId == null) {
+    autoSkipIntervalId = setInterval(() => {
+      for (const ind of indicators) {
+        if (ind._resolved || typeof ind._autoSkipEndsAt !== 'number') continue;
+        updateAutoSkipLabelText(ind);
+      }
+    }, 1000);
+  }
+}
+
+function stopAutoSkipForIndicator(indicator) {
+  delete indicator._autoSkipEndsAt;
+  refreshAutoSkipTicker();
+  const span = overlayRoot.querySelector(`.indicator-auto-skip[data-indicator-id="${indicator._id}"]`);
+  if (span) span.remove();
+}
+
 function sendResolutionEvent(indicator, { result, action, keepVisible, clickPoint }) {
   const payload = {
     type: 'indicator_resolved',
@@ -276,6 +322,7 @@ function fireResolution(indicator, button) {
   //   foot; the next indicate clears it. Used for Next, Accept, and Skip.
   // - keepVisible=false: splice now and re-render (e.g. X close only).
   if (!indicator || indicator._resolved) return;
+  stopAutoSkipForIndicator(indicator);
   indicator._resolved = true;
   indicator._resolvedKind = button.kind;
   if (!button.keepVisible) {
@@ -310,6 +357,9 @@ function closeIndicator(indicator) {
   const idx = indicators.indexOf(indicator);
   if (idx === -1) return;
   const wasResolved = Boolean(indicator._resolved);
+  if (!wasResolved) {
+    stopAutoSkipForIndicator(indicator);
+  }
   indicators.splice(idx, 1);
   render();
   if (!wasResolved) {
@@ -332,20 +382,66 @@ function shouldBeInteractive(target) {
   return Boolean(target && target.closest && target.closest('.indicator-card'));
 }
 
-function clampCardLeft(left) {
-  const maxLeft = Math.max(
-    VIEWPORT_MARGIN_PX,
-    window.innerWidth - CARD_WIDTH_PX - VIEWPORT_MARGIN_PX
-  );
-  return Math.max(VIEWPORT_MARGIN_PX, Math.min(left, maxLeft));
+function effectiveClampRect(indicator) {
+  const pickFromCenter = (cx, cy) => {
+    if (!layoutDisplays || layoutDisplays.length === 0) {
+      return null;
+    }
+    const hit = layoutDisplays.find(
+      (d) => cx >= d.x && cx < d.x + d.w && cy >= d.y && cy < d.y + d.h
+    );
+    if (hit) {
+      return hit;
+    }
+    // Center falls in a bezel/gap between monitors: use nearest display by rect center.
+    let best = null;
+    let bestDist = Infinity;
+    for (const d of layoutDisplays) {
+      const dcx = d.x + d.w / 2;
+      const dcy = d.y + d.h / 2;
+      const dist = (cx - dcx) ** 2 + (cy - dcy) ** 2;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = d;
+      }
+    }
+    return best;
+  };
+
+  let cx;
+  let cy;
+  if (indicator && indicator.coords) {
+    const c = indicator.coords;
+    cx = c.x + c.w / 2;
+    cy = c.y + c.h / 2;
+  } else if (primaryRect) {
+    cx = primaryRect.x + primaryRect.w / 2;
+    cy = primaryRect.y + primaryRect.h / 2;
+  } else {
+    cx = window.innerWidth / 2;
+    cy = window.innerHeight / 2;
+  }
+
+  const fromDisplays = pickFromCenter(cx, cy);
+  if (fromDisplays) {
+    return fromDisplays;
+  }
+  if (primaryRect) {
+    return primaryRect;
+  }
+  return { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
 }
 
-function clampCardTop(top) {
-  const maxTop = Math.max(
-    VIEWPORT_MARGIN_PX,
-    window.innerHeight - TOOLTIP_ESTIMATED_HEIGHT_PX - VIEWPORT_MARGIN_PX
-  );
-  return Math.max(VIEWPORT_MARGIN_PX, Math.min(top, maxTop));
+function clampCardToRect(left, top, width, height, indicator) {
+  const r = effectiveClampRect(indicator);
+  const m = VIEWPORT_MARGIN_PX;
+  const minL = r.x + m;
+  const minT = r.y + m;
+  const maxL = r.x + r.w - width - m;
+  const maxT = r.y + r.h - height - m;
+  const clampedLeft = maxL >= minL ? Math.max(minL, Math.min(left, maxL)) : minL;
+  const clampedTop = maxT >= minT ? Math.max(minT, Math.min(top, maxT)) : minT;
+  return { left: clampedLeft, top: clampedTop };
 }
 
 function rectOverlapArea(a, b) {
@@ -354,7 +450,8 @@ function rectOverlapArea(a, b) {
   return w * h;
 }
 
-function computeCardLeftTop(coords) {
+function computeCardLeftTop(indicator) {
+  const coords = indicator.coords;
   // Pick the first side (below, above, right, left) whose clamped card rect
   // does not overlap the padded bbox; fall back to the smallest-overlap side
   // so cards never spawn directly on top of the highlight, which would steal
@@ -378,8 +475,15 @@ function computeCardLeftTop(coords) {
   let bestPos = null;
   let bestOverlap = Infinity;
   for (const cand of candidates) {
-    const left = clampCardLeft(cand.left);
-    const top = clampCardTop(cand.top);
+    const clamped = clampCardToRect(
+      cand.left,
+      cand.top,
+      CARD_WIDTH_PX,
+      TOOLTIP_ESTIMATED_HEIGHT_PX,
+      indicator
+    );
+    const left = clamped.left;
+    const top = clamped.top;
     const rect = {
       left,
       top,
@@ -400,10 +504,17 @@ function computeCardLeftTop(coords) {
 
 function applyCardPosition(card, indicator, base) {
   // _position (set by drag) wins over the auto-computed base so user moves stick.
-  const left = indicator._position ? indicator._position.left : base.left;
-  const top = indicator._position ? indicator._position.top : base.top;
-  card.style.left = `${clampCardLeft(left)}px`;
-  card.style.top = `${clampCardTop(top)}px`;
+  const rawLeft = indicator._position ? indicator._position.left : base.left;
+  const rawTop = indicator._position ? indicator._position.top : base.top;
+  const cw = card.offsetWidth || CARD_WIDTH_PX;
+  const ch = card.offsetHeight || TOOLTIP_ESTIMATED_HEIGHT_PX;
+  const pos = clampCardToRect(rawLeft, rawTop, cw, ch, indicator);
+  if (indicator._position) {
+    indicator._position.left = pos.left;
+    indicator._position.top = pos.top;
+  }
+  card.style.left = `${pos.left}px`;
+  card.style.top = `${pos.top}px`;
 }
 
 function createConnector(indicator, card) {
@@ -816,15 +927,6 @@ function render() {
       bbox.style.width = `${indicator.coords.w + BOUNDS_PADDING_PX * 2}px`;
       bbox.style.height = `${indicator.coords.h + BOUNDS_PADDING_PX * 2}px`;
       overlayRoot.appendChild(bbox);
-
-      applyCardPosition(card, indicator, computeCardLeftTop(indicator.coords));
-    } else {
-      const cx = primaryRect ? primaryRect.x + primaryRect.w / 2 : window.innerWidth / 2;
-      const cy = primaryRect ? primaryRect.y + primaryRect.h / 2 : window.innerHeight / 2;
-      applyCardPosition(card, indicator, {
-        left: cx - CARD_WIDTH_PX / 2,
-        top: cy - TOOLTIP_ESTIMATED_HEIGHT_PX / 2,
-      });
     }
 
     const header = document.createElement('header');
@@ -839,6 +941,18 @@ function render() {
     title.textContent = TYPE_LABELS[indicator.type] || indicator.type;
     titleWrap.appendChild(title);
 
+    const trailing = document.createElement('div');
+    trailing.className = 'indicator-header-trailing';
+
+    if (!indicator._resolved && typeof indicator._autoSkipEndsAt === 'number') {
+      const autoSkip = document.createElement('span');
+      autoSkip.className = 'indicator-auto-skip';
+      autoSkip.dataset.indicatorId = indicator._id;
+      autoSkip.setAttribute('aria-hidden', 'true');
+      autoSkip.textContent = formatAutoSkipLabel(indicator);
+      trailing.appendChild(autoSkip);
+    }
+
     const closeButton = document.createElement('button');
     closeButton.type = 'button';
     closeButton.className = 'indicator-close';
@@ -846,8 +960,10 @@ function render() {
     closeButton.textContent = '×';
     closeButton.addEventListener('click', () => closeIndicator(indicator));
 
+    trailing.appendChild(closeButton);
+
     header.appendChild(titleWrap);
-    header.appendChild(closeButton);
+    header.appendChild(trailing);
     card.appendChild(header);
 
     const text = document.createElement('p');
@@ -864,6 +980,22 @@ function render() {
     card.appendChild(actions);
 
     overlayRoot.appendChild(card);
+
+    // Position after layout: pre-append `offsetHeight` is wrong (defaults to estimate), so
+    // the card could extend past the monitor edge until drag reclamped with real size.
+    if (indicator.coords) {
+      applyCardPosition(card, indicator, computeCardLeftTop(indicator));
+    } else {
+      const cx = primaryRect ? primaryRect.x + primaryRect.w / 2 : window.innerWidth / 2;
+      const cy = primaryRect ? primaryRect.y + primaryRect.h / 2 : window.innerHeight / 2;
+      const cw = card.offsetWidth || CARD_WIDTH_PX;
+      const ch = card.offsetHeight || TOOLTIP_ESTIMATED_HEIGHT_PX;
+      applyCardPosition(card, indicator, {
+        left: cx - cw / 2,
+        top: cy - ch / 2,
+      });
+    }
+
     const connector = createConnector(indicator, card);
     bindCardDrag(card, closeButton, indicator, connector);
     if (connector) {
@@ -872,6 +1004,7 @@ function render() {
     }
   }
   // Re-evaluate interactivity after DOM updates (e.g. closed the last card).
+  refreshAutoSkipTicker();
   syncInteractivity(false);
 }
 
@@ -890,6 +1023,7 @@ window.overlayApi.onCommand((message) => {
     }
     if (message.command === 'setLayout') {
       const pr = message.payload && message.payload.primaryRect;
+      const rawDisplays = message.payload && message.payload.displays;
       if (
         pr &&
         typeof pr.x === 'number' &&
@@ -904,11 +1038,33 @@ window.overlayApi.onCommand((message) => {
         pr.h > 0
       ) {
         primaryRect = { x: pr.x, y: pr.y, w: pr.w, h: pr.h };
+        let displays = null;
+        if (Array.isArray(rawDisplays)) {
+          displays = rawDisplays.filter(
+            (d) =>
+              d &&
+              typeof d.x === 'number' &&
+              typeof d.y === 'number' &&
+              typeof d.w === 'number' &&
+              typeof d.h === 'number' &&
+              Number.isFinite(d.x) &&
+              Number.isFinite(d.y) &&
+              Number.isFinite(d.w) &&
+              Number.isFinite(d.h) &&
+              d.w > 0 &&
+              d.h > 0
+          );
+        }
+        layoutDisplays = displays && displays.length > 0 ? displays : null;
         render();
       }
       return;
     }
     if (message.command === 'hideAll') {
+      if (autoSkipIntervalId != null) {
+        clearInterval(autoSkipIntervalId);
+        autoSkipIntervalId = null;
+      }
       indicators.length = 0;
       render();
       return;
@@ -927,10 +1083,16 @@ window.overlayApi.onCommand((message) => {
       if (!indicator || typeof indicator.type !== 'string') {
         throw new Error('Missing indicator payload.');
       }
+      const rawMs = message.payload && message.payload.awaitResolutionTimeoutMs;
+      const ms =
+        typeof rawMs === 'number' && Number.isFinite(rawMs) && rawMs > 0
+          ? rawMs
+          : DEFAULT_AWAIT_RESOLUTION_TIMEOUT_MS;
       indicators.push({
         ...indicator,
         _id: indicator.id || `indicator-${indicatorSequence++}`,
         _footerFocus: isDualFooterType(indicator.type) ? primaryActionKind(indicator.type) : undefined,
+        _autoSkipEndsAt: Date.now() + ms,
       });
       render();
       return;

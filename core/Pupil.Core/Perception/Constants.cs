@@ -9,6 +9,10 @@ internal static class PerceptionConstants
     internal const int MaxWindows = 12;
     internal const double MinVisibleRatio = 0.02;
 
+    // Layered windows with overall alpha below this byte value are treated as transparent
+    // for occlusion/UIA-walk purposes (~6% of 255).
+    internal const byte LayeredAlphaTransparentThreshold = 16;
+
     // UIAutomation property IDs cached during traversal.
     internal const int PropBoundingRect = 30001;
     internal const int PropControlType = 30003;

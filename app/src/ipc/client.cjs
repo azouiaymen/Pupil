@@ -53,20 +53,28 @@ class IpcClient extends EventEmitter {
   }
 
   // Send a JSON-RPC style request. Resolves with `result`, rejects on error or timeout.
-  async call(method, params) {
+  async call(method, params, options) {
     if (!this._socket) {
       throw new Error('IPC client not connected.');
     }
     if (this._pending.size >= MAX_PENDING) {
       throw new Error('IPC client request queue full.');
     }
+    const timeoutMs =
+      options &&
+      typeof options === 'object' &&
+      typeof options.timeoutMs === 'number' &&
+      Number.isFinite(options.timeoutMs) &&
+      options.timeoutMs > 0
+        ? options.timeoutMs
+        : this._requestTimeoutMs;
     const id = `c-${crypto.randomBytes(6).toString('hex')}`;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this._pending.delete(id)) {
           reject(new Error(`Daemon method '${method}' timed out.`));
         }
-      }, this._requestTimeoutMs);
+      }, timeoutMs);
       this._pending.set(id, { resolve, reject, timer });
       try {
         this._socket.write(encodeLine({ id, method, params }));

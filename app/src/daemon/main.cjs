@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const { IpcServer } = require('../ipc/server.cjs');
 const { SidecarManager } = require('../sidecar/manager.cjs');
 const { normalizeIndicator, parseCoordsString } = require('./state.cjs');
-const { OVERLAY_PROTOCOL_VERSION } = require('../common/protocol.cjs');
+const { OVERLAY_PROTOCOL_VERSION, AWAIT_RESOLUTION_TIMEOUT_MS } = require('../common/protocol.cjs');
 const { daemonPipePath, runtimeRoot } = require('../common/paths.cjs');
 const input = require('./input.cjs');
 
@@ -19,7 +19,6 @@ const input = require('./input.cjs');
 
 const MAX_PENDING_RENDERER_COMMANDS = 256;
 const RENDERER_HEARTBEAT_INTERVAL_MS = 4000;
-const AWAIT_RESOLUTION_TIMEOUT_MS = 180000;
 const INDICATE_ACK_TIMEOUT_MS = 4000;
 const POST_RESOLUTION_PERCEIVE_DELAY_MS = 250;
 
@@ -131,11 +130,26 @@ function getPrimaryDisplayWindowRect() {
   };
 }
 
+/** Each monitor's work area in overlay window-local DIP (excludes taskbar where applicable). */
+function getAllDisplayWorkAreaRects() {
+  const displays = screen.getAllDisplays();
+  return displays.map((d) => {
+    const b = d.workArea || d.bounds;
+    return {
+      x: Math.round(Number(b.x) - virtualOrigin.x),
+      y: Math.round(Number(b.y) - virtualOrigin.y),
+      w: Math.round(Number(b.width)),
+      h: Math.round(Number(b.height)),
+    };
+  });
+}
+
 function sendLayoutToRenderer() {
   const primaryRect = getPrimaryDisplayWindowRect();
   if (!primaryRect) return;
   try {
-    sendRendererCommand('setLayout', { primaryRect });
+    const displays = getAllDisplayWorkAreaRects();
+    sendRendererCommand('setLayout', { primaryRect, displays });
   } catch (_e) {
     // Overlay window not ready yet; queued indicate will follow a later setLayout from ready/display events.
   }
@@ -506,7 +520,10 @@ function rehydrateIndicators() {
   try {
     sendRendererCommand('hideAll', {});
     for (const indicator of indicators.values()) {
-      sendRendererCommand('indicate', { indicator });
+      sendRendererCommand('indicate', {
+        indicator,
+        awaitResolutionTimeoutMs: AWAIT_RESOLUTION_TIMEOUT_MS,
+      });
     }
   } catch (err) {
     logger.warn('rehydrate failed:', err.message);
@@ -540,7 +557,10 @@ async function handleIndicate(params) {
   indicators.clear();
   sendRendererCommand('hideAll', {});
   indicators.set(indicatorId, normalized);
-  sendRendererCommand('indicate', { indicator: normalized });
+  sendRendererCommand('indicate', {
+    indicator: normalized,
+    awaitResolutionTimeoutMs: AWAIT_RESOLUTION_TIMEOUT_MS,
+  });
   // Arm Electron's globalShortcut so Tab / Shift+Tab / Escape are routed to
   // the renderer's resolution path even though the overlay window is
   // non-activating and never owns OS keyboard focus.

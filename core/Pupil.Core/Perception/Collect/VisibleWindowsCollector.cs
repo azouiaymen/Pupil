@@ -71,6 +71,12 @@ internal static class VisibleWindowsCollector
             {
                 return true;
             }
+            // Skip visually transparent (typically layered/recorder overlay) windows so they
+            // neither become occluders nor get walked by UIA further down the pipeline.
+            if (NativeMethods.IsWindowTransparent(hwnd))
+            {
+                return true;
+            }
             // Keep only windows with a non-empty intersection with the virtual desktop.
             var rect = WindowRect(hwnd, screenBounds);
             if (rect is null || Geometry.RectArea(rect.Value) == 0)

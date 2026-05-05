@@ -8,6 +8,7 @@ html, body, #overlay-root {
   width: 100%;
   height: 100%;
   margin: 0;
+  padding: 0;
   overflow: hidden;
   background: transparent;
   pointer-events: none;
@@ -86,6 +87,21 @@ html, body, #overlay-root {
   justify-content: space-between;
   gap: 12px;
   user-select: none;
+}
+
+.indicator-header-trailing {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.indicator-auto-skip {
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1;
+  color: #6b7280;
+  white-space: nowrap;
 }
 
 .indicator-title-wrap {
