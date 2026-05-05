@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, screen } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -164,9 +164,10 @@ function createOverlayWindow() {
     frame: false,
     hasShadow: false,
     alwaysOnTop: true,
-    // Focusable so the renderer can capture Tab / Escape via DOM keydown when
-    // an indicator is up. Click-through is preserved by setIgnoreMouseEvents below.
-    focusable: true,
+    // Non-activating: target window keeps OS keyboard focus. Tab / Shift+Tab /
+    // Escape are intercepted via globalShortcut (see armKeys), not via DOM
+    // keydown. Click-through is still toggled by setIgnoreMouseEvents below.
+    focusable: false,
     skipTaskbar: true,
     webPreferences: {
       preload: path.join(__dirname, '..', 'overlay', 'preload.cjs'),
@@ -188,6 +189,65 @@ function setWindowInteractivity(active) {
   if (interactive === next) return;
   interactive = next;
   mainWindow.setIgnoreMouseEvents(!interactive, { forward: true });
+}
+
+// =============================================================================
+// Global keyboard shortcuts (Tab / Shift+Tab / Escape) for indicate cards
+// =============================================================================
+//
+// Electron's globalShortcut wraps Win32 RegisterHotKey, which intercepts the
+// keystroke before it reaches the focused application — exactly what we need
+// so the user's File menu (or any popover) keeps focus while still being able
+// to drive the overlay card with the keyboard. Single-key Tab / Esc binds are
+// known to be flaky on some Windows configurations, so we degrade to mouse
+// Skip / Accept silently if register() returns false.
+
+let keysArmed = false;
+let loggedRegisterFailure = { Tab: false, 'Shift+Tab': false, Escape: false };
+
+const SHORTCUT_KIND_BY_ACCELERATOR = {
+  Tab: 'tab',
+  'Shift+Tab': 'shift+tab',
+  Escape: 'escape',
+};
+
+function dispatchTriggerKey(kind) {
+  try {
+    sendRendererCommand('triggerKey', { kind });
+  } catch (err) {
+    logger.warn('triggerKey dispatch failed:', err && err.message ? err.message : err);
+  }
+}
+
+function armKeys() {
+  if (keysArmed) return;
+  keysArmed = true;
+  for (const accel of Object.keys(SHORTCUT_KIND_BY_ACCELERATOR)) {
+    const kind = SHORTCUT_KIND_BY_ACCELERATOR[accel];
+    let ok = false;
+    try {
+      ok = globalShortcut.register(accel, () => dispatchTriggerKey(kind));
+    } catch (err) {
+      logger.warn(`globalShortcut.register('${accel}') threw:`, err && err.message ? err.message : err);
+      ok = false;
+    }
+    if (!ok && !loggedRegisterFailure[accel]) {
+      loggedRegisterFailure[accel] = true;
+      logger.warn(`globalShortcut.register('${accel}') returned false; mouse Skip/Accept still works.`);
+    }
+  }
+}
+
+function disarmKeys() {
+  if (!keysArmed) return;
+  keysArmed = false;
+  for (const accel of Object.keys(SHORTCUT_KIND_BY_ACCELERATOR)) {
+    try {
+      globalShortcut.unregister(accel);
+    } catch (err) {
+      logger.warn(`globalShortcut.unregister('${accel}') threw:`, err && err.message ? err.message : err);
+    }
+  }
 }
 
 // PerMonitorV2 sidecar emits UIA rects in physical screen pixels; Electron
@@ -337,6 +397,9 @@ function handleInteraction(payload) {
 /** When a new indicate replaces the overlay, prior callers still await resolution; resolve them as skipped (no OS action). */
 function autoSkipPendingResolutions(reason) {
   const label = typeof reason === 'string' && reason.length > 0 ? reason : 'unknown';
+  // Disarm before re-arming on the next handleIndicate so we never leak an
+  // intercept across cards; armKeys() in handleIndicate takes over immediately.
+  disarmKeys();
   for (const [id, waiter] of [...indicateResolutionWaiters.entries()]) {
     if (!waiter) continue;
     clearTimeout(waiter.timer);
@@ -351,6 +414,10 @@ function autoSkipPendingResolutions(reason) {
 // in its map (so rehydrate after a renderer reload still shows it as in-flight)
 // or evict it immediately (X close). Skip uses the same in-flight path as Next/Accept.
 async function resolveIndicatorFromRenderer(indicatorId, payload) {
+  // Stop intercepting Tab/Esc as soon as the user resolves the card so the
+  // spinner phase (waiting for the next indicate) does not eat keystrokes
+  // meant for the user's real foreground app.
+  disarmKeys();
   const indicator = indicators.get(indicatorId);
   const result = payload.result === 'done' || payload.result === 'skipped' ? payload.result : null;
   const ALLOWED_ACTIONS = new Set(['click', 'input']);
@@ -390,10 +457,9 @@ async function resolveIndicatorFromRenderer(indicatorId, payload) {
         await input.clickAt(cx, cy);
       }
       if (action === 'input') {
-        // Without a focus click, the overlay (which we focus()'d for Tab/Escape)
-        // still owns the OS keyboard focus. Blur it so Windows hands focus back
-        // to the previously-foreground window before the chord fires; runInput
-        // uses pressShortcut which has its own settle delay.
+        // Defensive: the overlay is non-activating (focusable: false) so it
+        // should never own keyboard focus, but blur() before chord-only input
+        // is a cheap safety net for any platform/edge case where it might.
         if (!indicator.coords && mainWindow && !mainWindow.isDestroyed()) {
           try {
             mainWindow.blur();
@@ -475,13 +541,10 @@ async function handleIndicate(params) {
   sendRendererCommand('hideAll', {});
   indicators.set(indicatorId, normalized);
   sendRendererCommand('indicate', { indicator: normalized });
-  // Pull keyboard focus to the overlay so the renderer's Tab / Escape handlers fire
-  // for the just-shown indicator. focus() is a no-op if the window is gone.
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    try {
-      mainWindow.focus();
-    } catch (_e) {}
-  }
+  // Arm Electron's globalShortcut so Tab / Shift+Tab / Escape are routed to
+  // the renderer's resolution path even though the overlay window is
+  // non-activating and never owns OS keyboard focus.
+  armKeys();
 
   const result = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -569,6 +632,12 @@ app.on('before-quit', () => {
     ipcServer.close();
   }
   if (sidecar) sidecar.stop();
+  try { globalShortcut.unregisterAll(); } catch (_e) {}
+});
+
+app.on('will-quit', () => {
+  // Electron docs recommend unregisterAll on quit; idempotent with before-quit.
+  try { globalShortcut.unregisterAll(); } catch (_e) {}
 });
 
 // Soak unhandled errors so a stray async failure cannot turn into a daemon-wide crash.

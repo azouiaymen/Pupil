@@ -7,11 +7,14 @@
 // Shim <-> daemon JSON-RPC envelope.
 const SHIM_PROTOCOL_VERSION = 1;
 
-// Daemon <-> overlay renderer command envelope. v7: compact indicator model
-// — flat fields type / coords ("x,y,w,h") / desc / value; value for `input` is
-// { clip?: string, chords: string[][] } (nut-js Key chord steps; optional clip
-// primes clipboard before chords, then restores prior text/plain in finally).
-const OVERLAY_PROTOCOL_VERSION = 7;
+// Daemon <-> overlay renderer command envelope.
+// v7: compact indicator model — flat fields type / coords ("x,y,w,h") / desc /
+//     value; value for `input` is { clip?: string, chords: string[][] }.
+// v8: overlay window is non-activating and Tab/Shift+Tab/Escape are intercepted
+//     by Electron's globalShortcut in the daemon and dispatched to the
+//     renderer via a new `triggerKey` command (payload: { kind:
+//     'tab'|'shift+tab'|'escape' }).
+const OVERLAY_PROTOCOL_VERSION = 8;
 
 // Daemon <-> sidecar JSON stdio envelope.
 const SIDECAR_PROTOCOL_VERSION = '1';

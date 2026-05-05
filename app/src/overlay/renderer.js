@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 7;
+const PROTOCOL_VERSION = 8;
 const overlayRoot = document.getElementById('overlay-root');
 const indicators = [];
 /** Primary display rect in window-local DIP; set by daemon `setLayout` for no-bounds card placement. */
@@ -935,6 +935,18 @@ window.overlayApi.onCommand((message) => {
       render();
       return;
     }
+    if (message.command === 'triggerKey') {
+      // Keyboard input arrives here from the daemon's global hook (Tab,
+      // Shift+Tab, Escape). The renderer keeps owning the resolution logic
+      // exactly as it did when these keys came from DOM keydown.
+      const target = topMostUnresolved();
+      if (!target) return;
+      const kind = message.payload && message.payload.kind;
+      if (kind === 'tab') handleTab(target);
+      else if (kind === 'shift+tab') handleShiftTab(target);
+      else if (kind === 'escape') handleEscape(target);
+      return;
+    }
   } catch (error) {
     // Command failures are surfaced with requestId so runtime can map the error.
     window.overlayApi.sendEvent({
@@ -953,40 +965,38 @@ window.overlayApi.sendEvent({
   payload: {},
 });
 
-window.addEventListener('keydown', (event) => {
-  if (event.key !== 'Tab' && event.key !== 'Escape') return;
-  const target = topMostUnresolved();
-  if (!target) return;
-  if (event.key === 'Tab') {
-    // Suppress default focus-traversal while indicators are up.
-    event.preventDefault();
-    event.stopPropagation();
-    // Shift+Tab toggles Skip vs primary (Accept/Next) so the chip can sit on either foot; Tab fires the selected one.
-    if (event.shiftKey && isDualFooterType(target.type)) {
-      const cur = footerFocusKind(target);
-      const pk = primaryActionKind(target.type);
-      target._footerFocus = cur === 'skip' ? pk : 'skip';
-      updateFooterFocusVisual(target);
-      return;
-    }
-    let button;
-    if (isDualFooterType(target.type)) {
-      button = buttonsFor(target.type).find((b) => b.kind === footerFocusKind(target));
-    } else {
-      button = primaryButtonFor(target.type);
-    }
+// Tab / Shift+Tab / Escape are no longer captured via DOM keydown. The overlay
+// window is non-activating (WS_EX_NOACTIVATE) so it never owns OS keyboard
+// focus; the daemon arms Electron's globalShortcut while a card is awaiting
+// resolution and forwards each intercepted key here as a `triggerKey` command
+// (see armKeys / disarmKeys in app/src/daemon/main.cjs).
+function handleTab(target) {
+  if (!isDualFooterType(target.type)) {
+    const button = primaryButtonFor(target.type);
     if (button) fireResolution(target, button);
     return;
   }
-  if (event.key === 'Escape') {
-    // Always resolves Skip (not the keyboard-focused foot). Tab uses footerFocusKind.
-    const skipButton = skipButtonFor(target.type);
-    if (!skipButton) return;
-    event.preventDefault();
-    event.stopPropagation();
-    fireResolution(target, { ...skipButton, kind: 'skip' });
+  const button = buttonsFor(target.type).find((b) => b.kind === footerFocusKind(target));
+  if (button) fireResolution(target, button);
+}
+
+function handleShiftTab(target) {
+  if (!isDualFooterType(target.type)) {
+    handleTab(target);
+    return;
   }
-});
+  // Toggle the chip between Skip and the primary (Accept/Next); the next Tab fires the selected one.
+  const cur = footerFocusKind(target);
+  const pk = primaryActionKind(target.type);
+  target._footerFocus = cur === 'skip' ? pk : 'skip';
+  updateFooterFocusVisual(target);
+}
+
+function handleEscape(target) {
+  const skipButton = skipButtonFor(target.type);
+  if (!skipButton) return;
+  fireResolution(target, { ...skipButton, kind: 'skip' });
+}
 
 window.addEventListener('mousemove', (event) => {
   syncInteractivity(shouldBeInteractive(event.target));
