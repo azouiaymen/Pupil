@@ -137,7 +137,7 @@ const indicateInputSchema = z
         path: ['value'],
       });
     }
-    if (t === 'click' && !data.coords) {
+    if ((t === 'click' || t === 'input') && !data.coords) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `type='${t}' requires coords as \"x,y,w,h\".`,
@@ -161,8 +161,14 @@ async function main() {
   server.registerTool(
     'perceive',
     {
-      description:
-        'Capture visible UI elements as compact CSV. Takes no arguments; Pupil overlay is always excluded.',
+      description: [
+          'Returns an untruncated compact CSV of visible UI elements (Pupil overlay excluded).',
+          'Takes no arguments.',
+          '',
+          'At the start of any Pupil workflow, call this once to get the initial snapshot.',
+          'After that, prefer the `perceive` string bundled in the previous `indicate` result JSON (`perceive` field) — you usually do not need a separate `perceive` call between steps.',
+          'Call `perceive()` again only when you need a fresh read and you have no post-`indicate` snapshot to use, the UI may have changed outside the loop, you need full (untruncated) control names, or you only need a read without showing an `indicate` card.',
+      ].join('\n'),
       inputSchema: perceiveInputSchema,
     },
     async () => {
@@ -177,20 +183,40 @@ async function main() {
     'indicate',
     {
       description: [
-        'Show one overlay card (replaces any previous). Call blocks until resolved: Tab (Next or Accept), Escape (Skip on click/input only), button clicks, or X.',
-        'Shape (flat object, minify JSON in tool calls to save tokens):',
-        '- type: one of info | warning | wait | action | click | input | danger.',
-        '- coords: optional string "x,y,w,h" (integers, w and h positive). Required for click only; optional for input (recommended when targeting a specific control).',
-        '- desc: optional extra context only when it adds information the highlight does not (do not repeat the control label).',
-        '- value: required for input only: object { clip?: string, chords: string[][] }.',
-        '  - chords: non-empty nut-js chord steps (modifiers first per chord; ~50ms between steps). Put every step for one intended outcome in one chords array (one indicate) — do not split a shortcut sequence across multiple indicate calls when one list of chord arrays suffices.',
-        '  - clip: optional; when set, daemon saves clipboard text, writes clip, runs chords (often include Ctrl+V), restores prior text in finally.',
-        'Prioritize click over keyboard shortcuts: use type click with coords from perceive whenever the CSV shows a control (button, link, menu item, tab, tree row, etc.) that achieves the same outcome as a chord (Save vs Ctrl+S, Open vs Ctrl+O, OK vs Enter, menu paths vs Alt+letters). Use input for real typing or paste, global shortcuts without a listed target, or when no reliable clickable row exists; do not use input/chords to mimic an action you could take with click on that target.',
-        'Buttons: Next (Tab) for info/warning/wait/action/danger; Skip (Escape) + Accept (Tab) for click/input. Accept runs OS action where applicable.',
-        'After Accept/Next the card shows a spinner until the next indicate clears it.',
-        'Returns JSON { result, perceive }: result is "done" or "skipped"; perceive is compact CSV like the perceive tool (post-action snapshot, ~50ms after resolution), except the name column is truncated after ' +
+        'Show a bounding box on coords with a tooltip card on the overlay to indicate the next step to the user (replaces any previous card).',
+        '',
+        'The tooltip includes buttons and blocks until resolved:',
+        '- info|warning|wait|action|danger: Next (Tab)',
+        '- click|input: Skip (Escape) and Accept (Tab)',
+        '- Pressing Accept runs the OS action for click/input; pressing Next acknowledges informational cards.',
+        '',
+        'Parameters (flat object):',
+        '- type (required): one of info|warning|wait|action|click|input|danger.',
+        '- coords (format "x,y,w,h"): required for click and input; highly encouraged for almost all cards because highlighting the target helps the user understand exactly what is being referenced. Omit only for rare, general informational cards with no specific UI target.',
+        '- desc (optional): extra context only when it adds information not obvious from the highlight; do not repeat a visible control label.',
+        '- value (required only for input): { clip?: string, chords: string[][] }.',
+        '  - chords: non-empty key-chord steps, executed in order; each inner array is one chord, with modifier keys first (nut-js key names, examples: LeftControl, RightControl, LeftAlt, LeftSuper, Enter, Escape, Tab, A..Z, F1..F12).',
+        '  - clip: optional clipboard text set before chords and restored afterward.',
+        '',
+        'Type guide (purpose / interaction / priority):',
+        '- click: performs one OS left-click at the exact center of coords (bbox midpoint); strongly prefer this when a target control is visible in perceive, and prefer it over equivalent keyboard shortcuts.',
+        '- input: first performs the same center-click on coords to focus the target window/pane, then runs the provided keyboard sequence (value.chords, with optional value.clip flow).',
+        '- wait: tell the user to wait before the next step happens; also use it as pacing/tempo when the latest returned perceive indicates loading, transitions, or unstable UI state before continuing.',
+        '- action: ask the user to perform a manual interaction when click/input did not work reliably or the needed interaction is out of scope for these types (e.g., scrolling, drag-and-drop, right/middle click, complex gestures, or unsupported controls).',
+        '- warning: indication card for elevated attention (caution/ambiguity).',
+        '- danger: indication card for highest attention (high-risk/safety-critical).',
+        '- info: indication card for normal attention (neutral guidance/progress/done summary).',
+        '',
+        'Priority rule:',
+        '- Prefer click over input and over keyboard shortcuts when perceive (or prior indicate return) exposes a control that can do the same action.',
+        '',
+        'Returns:',
+        '- JSON text { "result": "done" | "skipped", "perceive": "<compact CSV>" }.',
+        '- perceive: post-resolution snapshot (~50ms), same shape as perceive() but with name truncated after ' +
           INDICATE_PERCEIVE_NAME_MAX_CHARS +
-          ' characters with ... appended when longer — standalone perceive is not truncated. "skipped" means the user skipped that card\'s proposed OS action (Skip/Escape or dismiss without Accept) — not cancellation of the agent\'s overall task: read perceive, infer why (e.g. step already done, manual action, different path), then continue with the next indicate unless the user clearly aborts the whole task.',
+          ' chars.',
+        '- result=skipped means only this card action did not run (not automatic global task cancel); use returned perceive to continue unless the user explicitly aborts.',
+        '- Timeout: this call can time out (aligned to indicate wait timeout). Treat timeout as unresolved/needs recovery (re-check UI and retry or pick a safer next step), not as success.',
       ].join('\n'),
       inputSchema: indicateInputSchema,
     },
