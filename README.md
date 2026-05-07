@@ -2,36 +2,52 @@
 
 **Let agents perceive, indicate, and act in any application.**
 
-## Build (Windows)
+> This is my first open-source project — feedback and questions are very welcome (open a [GitHub Issue](https://github.com/ADevillers/Pupil/issues)).
 
-From the repository root:
+## What it is
 
-- `.\scripts\build.ps1` — builds the .NET core (`core\build.ps1`), copies `pupil-core.exe` into `app\vendor\win32-x64\`, then runs `pnpm install` and `pnpm rebuild electron` under `app\`.
+Pupil is a **Windows** stack for AI agents: it **perceives** UI as structured data, **indicates** decisions to a human (highlights, cards, click/input), and can **act** in the real desktop. It is early software: expect rough edges, and use it at your own risk on machines you control.
 
-## Smoke checks
+## Architecture at a glance
 
-- `.\scripts\smoke.ps1` — Python syntax checks for the MCP package, bridge checks under `overlay\`, and prints a short manual integration checklist.
+```mermaid
+flowchart LR
+    Agent[AI_Agent] -->|MCP| Shim[Node_MCP_shim]
+    Shim -->|IPC| Daemon[Electron_daemon]
+    Daemon -->|spawn| Core[pupil_core]
+    Agent -->|MCP_stdio| Py[Python_MCP]
+    Py --> Core
+```
 
-## Stop stuck processes (Windows)
+- **`app/`** — Node MCP shim ([`app/src/shim`](app/src/shim)), Electron overlay daemon, `pnpm` + Electron.
+- **`core/`** — .NET native sidecar built to `pupil-core.exe` and vendored for the app.
+- **`mcp/`** — Python MCP server over stdio ([`mcp/main.py`](mcp/main.py)); legacy rectangle tools + path to the full model.
+- **`scripts/`** — Build, smoke, and kill helpers for Windows.
+- **`.cursor/skills/pupil/`** — Optional Cursor skill for the perceive / indicate loop.
 
-- `.\scripts\kill.ps1` — force-stops the Pupil Electron daemon (only processes whose command line includes `daemon\main.cjs`) and any `pupil-core.exe` sidecars. Use before `.\scripts\build.ps1` if copies fail because files are locked.
+## Quick start (Windows)
+
+1. From the repo root, run `.\scripts\build.ps1` — builds the .NET core, copies `pupil-core.exe` into `app\vendor\win32-x64\`, then runs `pnpm install` and `pnpm rebuild electron` under `app\`.
+2. Install Python dependencies for the MCP package (Poetry / your workflow).
+3. Start the Python MCP server:
+   - `python .\mcp\main.py`
+
+If native binaries are missing or locked, run `.\scripts\kill.ps1` before rebuilding.
+
+### Other scripts
+
+- **`.\scripts\smoke.ps1`** — Python syntax checks for the MCP package, bridge checks, short manual integration checklist.
+- **`.\scripts\kill.ps1`** — Force-stops the Pupil Electron daemon (processes whose command line includes `daemon\main.cjs`) and `pupil-core.exe` sidecars. Use before `.\scripts\build.ps1` if copies fail because files are locked.
 
 ## MCP server (v1)
 
-The Python MCP server lives in `mcp/main.py` and exposes these tools:
+The Python MCP server lives in [`mcp/main.py`](mcp/main.py) and exposes these tools:
 
 - `perceive(overlay_hwnd: int | None = None) -> list[dict]`
 - `indicate_rect(x: int, y: int, w: int, h: int, color: str = "#00FFFF", alpha: float = 0.14) -> dict`
 - `clear() -> dict`
 
-### Run locally
-
-1. Run `.\scripts\build.ps1` so the native sidecar and Electron app dependencies are present.
-2. Install Python dependencies (including `mcp` SDK).
-3. Start server over stdio:
-   - `python .\mcp\main.py`
-
-### Tool contract
+### Tool contract (Python server)
 
 - `perceive` returns parsed UI nodes from `PerceptionApi.Perceive`.
 - `perceive` automatically excludes the overlay window by default.
@@ -76,3 +92,16 @@ Configure a local MCP server command that launches:
 - command: `python`
 - args: `[".\\mcp\\main.py"]`
 - working directory: repository root
+
+## Status & roadmap
+
+- Early development; **Windows-focused** today.
+- Integrations and docs will grow as the project stabilizes.
+
+## How to reach me
+
+**GitHub Issues:** [github.com/ADevillers/Pupil/issues](https://github.com/ADevillers/Pupil/issues) — bugs, ideas, and questions.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
