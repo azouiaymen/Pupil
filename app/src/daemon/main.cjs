@@ -187,14 +187,29 @@ function createOverlayWindow() {
       preload: path.join(__dirname, '..', 'overlay', 'preload.cjs'),
     },
   });
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  keepOverlayOnTop();
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  mainWindow.on('show', () => keepOverlayOnTop());
+  mainWindow.on('restore', () => keepOverlayOnTop());
   mainWindow.loadFile(path.join(__dirname, '..', 'overlay', 'index.html'));
   mainWindow.on('closed', () => {
     mainWindow = null;
     rendererReady = false;
   });
+}
+
+function keepOverlayOnTop() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    // Re-assert topmost whenever z-order may have changed.
+    mainWindow.setAlwaysOnTop(true, 'screen-saver');
+    if (typeof mainWindow.moveTop === 'function') {
+      mainWindow.moveTop();
+    }
+  } catch (err) {
+    logger.warn('keepOverlayOnTop failed:', err && err.message ? err.message : err);
+  }
 }
 
 function setWindowInteractivity(active) {
@@ -616,6 +631,14 @@ app.whenReady().then(async () => {
   screen.on('display-metrics-changed', onDisplayLayoutChange);
   screen.on('display-added', onDisplayLayoutChange);
   screen.on('display-removed', onDisplayLayoutChange);
+  app.on('browser-window-created', (_event, win) => {
+    if (mainWindow && win === mainWindow) return;
+    setImmediate(() => keepOverlayOnTop());
+  });
+  app.on('browser-window-focus', (_event, win) => {
+    if (mainWindow && win === mainWindow) return;
+    keepOverlayOnTop();
+  });
 
   sidecar = new SidecarManager({ logger });
   sidecar.on('ready', (payload) => logger.info('sidecar ready pid=' + payload.pid));
