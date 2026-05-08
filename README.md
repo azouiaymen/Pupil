@@ -1,107 +1,82 @@
 # Pupil
 
-**Let agents perceive, indicate, and act in any application.**
+<p align="center">
+  <img src="docs/assets/banner.png" alt="Pupil — Let agents perceive, indicate, and act in any application." width="800" />
+</p>
 
-> This is my first open-source project — feedback and questions are very welcome (open a [GitHub Issue](https://github.com/ADevillers/Pupil/issues)).
+Pupil is a Windows MCP server that lets an AI agent **perceive** your UI as structured data, **indicate** with an on-screen overlay, and **act** on the desktop when you accept.
 
-## What it is
+Demo where the human operator only does : `Tab`, `Tab`, `Tab`...
 
-Pupil is a **Windows** stack for AI agents: it **perceives** UI as structured data, **indicates** decisions to a human (highlights, cards, click/input), and can **act** in the real desktop. It is early software: expect rough edges, and use it at your own risk on machines you control.
+<p align="center">
+  <video src="docs/assets/demo.mp4" controls playsinline width="800">
+    <a href="docs/assets/demo.mp4">Download demo.mp4</a>
+  </video>
+</p>
 
-## Architecture at a glance
+## Why Pupil
 
-```mermaid
-flowchart LR
-    Agent[AI_Agent] -->|MCP| Shim[Node_MCP_shim]
-    Shim -->|IPC| Daemon[Electron_daemon]
-    Daemon -->|spawn| Core[pupil_core]
-    Agent -->|MCP_stdio| Py[Python_MCP]
-    Py --> Core
-```
+Today, working with an agent on a real desktop usually means a chat back-and-forth: you describe what you see, the agent describes what to do, you do it, you describe again. It works, but it's slow and a lot gets lost in translation.
 
-- **`app/`** — Node MCP shim ([`app/src/shim`](app/src/shim)), Electron overlay daemon, `pnpm` + Electron.
-- **`core/`** — .NET native sidecar built to `pupil-core.exe` and vendored for the app.
-- **`mcp/`** — Python MCP server over stdio ([`mcp/main.py`](mcp/main.py)); legacy rectangle tools + path to the full model.
-- **`scripts/`** — Build, smoke, and kill helpers for Windows.
-- **`.cursor/skills/pupil/`** — Optional Cursor skill for the perceive / indicate loop.
+Two things make that loop hard:
+
+- agents can't reliably **see** what's on screen, so context comes from your words (or repeated screenshots sent through the model);
+- and for many steps they **need you** to act — clicking a specific button, typing into a specific field, confirming a dialog — because they don't have hands on your machine.
+
+Pupil turns that chat into something more like working side by side. The agent gets a structured view of the UI instead of guessing from screenshots, and when it needs you it draws an **overlay card** on the exact control to click or field to fill. You stay in charge — you can accept, skip, or ignore — and as a bonus the agent can also execute the action itself when you let it, so the same channel covers "show me", "do this", and "let me do it for you".
+
+It's not a full autopilot. It's a tighter loop between what the agent sees, what it asks for, and what actually happens on your screen.
+
+## Examples
+
+Overlay cards for each `indicate` type (`info`, `warning`, `wait`, `danger`, `click`, `action`, `input`):
+
+<p align="center">
+  <img src="docs/assets/examples.png" alt="Pupil indicator examples: info, warning, wait, danger, click, action, input" width="800" />
+</p>
 
 ## Quick start (Windows)
 
 1. From the repo root, run `.\scripts\build.ps1` — builds the .NET core, copies `pupil-core.exe` into `app\vendor\win32-x64\`, then runs `pnpm install` and `pnpm rebuild electron` under `app\`.
-2. Install Python dependencies for the MCP package (Poetry / your workflow).
-3. Start the Python MCP server:
-   - `python .\mcp\main.py`
-
-If native binaries are missing or locked, run `.\scripts\kill.ps1` before rebuilding.
-
-### Other scripts
-
-- **`.\scripts\smoke.ps1`** — Python syntax checks for the MCP package, bridge checks, short manual integration checklist.
-- **`.\scripts\kill.ps1`** — Force-stops the Pupil Electron daemon (processes whose command line includes `daemon\main.cjs`) and `pupil-core.exe` sidecars. Use before `.\scripts\build.ps1` if copies fail because files are locked.
-
-## MCP server (v1)
-
-The Python MCP server lives in [`mcp/main.py`](mcp/main.py) and exposes these tools:
-
-- `perceive(overlay_hwnd: int | None = None) -> list[dict]`
-- `indicate_rect(x: int, y: int, w: int, h: int, color: str = "#00FFFF", alpha: float = 0.14) -> dict`
-- `clear() -> dict`
-
-### Tool contract (Python server)
-
-- `perceive` returns parsed UI nodes from `PerceptionApi.Perceive`.
-- `perceive` automatically excludes the overlay window by default.
-- `indicate_rect` draws one highlighted rectangle and replaces any previous one.
-- `clear` removes the current overlay rectangle.
-- If the sidecar or DLL is missing, run `.\scripts\build.ps1` first.
-
-### Node MCP shim (`app/src/shim`) — indicator shape
-
-`perceive` takes **no arguments**. `indicate` takes a **flat** object (no nested `indicator` wrapper):
-
-- `type` — `info` | `warning` | `wait` | `action` | `click` | `input` | `danger`
-- `coords` — optional string `"x,y,w,h"` (integers, `w` and `h` positive). **Required** for `click` only; optional for `input` (recommended when a specific control must receive focus before chords).
-- `desc` — optional extra copy; omit unless it adds information the highlight does not (do not repeat the control label).
-- `value` — **required** for `input` only: object `{ clip?: string, chords: string[][] }`. `chords` is a non-empty list of chord steps (nut-js `Key` names per chord, modifiers first, ~50ms between steps). Optional `clip`: before chords run, the daemon saves the current plain-text clipboard, writes `clip`, runs `chords` (typically including `Ctrl+V`), then restores the saved text in a `finally` so failures do not leave `clip` on the clipboard. **Accept on `click`** performs a single OS click at the **center** of the `coords` bbox. **Accept on `input` with `coords`** does the same center click first to focus, then runs clipboard + chords as above; **without `coords`**, the daemon blurs the overlay and sends chords to the previous foreground window (best-effort).
-
-**Automation preference:** prioritize **`click`** on a control listed in `perceive` over **`input`** with keyboard shortcuts when both achieve the same result (for example click **Save** instead of Ctrl+S, **OK** instead of Enter). Use **`input`** for typing and paste, shortcuts with no reliable on-screen target, or when the CSV has no suitable row.
-
-Every `indicate` call **replaces** any prior card and **blocks** until the user resolves it. The card header label is derived from `type`. Footer buttons:
-
-- `info` / `warning` / `wait` / `action` / `danger`: **Next** only (Tab). Resolves `"done"`.
-- `click` / `input`: **Skip** (**Escape**) + **Accept** (**Tab**). Accept runs the OS action, then resolves `"done"`.
-
-After Next/Accept, the card shows a spinner until the **next** `indicate` clears it. **X** resolves `"skipped"`.
-
-On success, the MCP tool response is JSON text shaped like:
+2. Point Cursor’s MCP config at the Node entrypoint. Replace `<path-to-pupil-repo>` with the absolute path to your clone (forward slashes are fine on Windows):
 
 ```json
-{ "result": "done", "perceive": "<compact CSV; same schema as perceive tool>" }
+{
+  "mcpServers": {
+    "pupil": {
+      "command": "node",
+      "args": ["<path-to-pupil-repo>/app/bin/pupil-mcp.js"]
+    }
+  }
+}
 ```
 
-Each `indicate` returns the next `perceive` snapshot (taken ~50ms after the resolved action), so a separate `perceive()` is only needed for the very first read (or after a long external delay or user-side change outside Pupil). In that bundled CSV only, each row’s `name` field is truncated after 100 characters with `...` appended; the standalone `perceive` tool does not truncate names.
+3. Reload MCP or restart Cursor so the server starts.
 
-### Indicator buttons & lifecycle (Python `mcp/main.py`)
+If native binaries are missing or locked, run `.\scripts\kill.ps1` before rebuilding. `.\scripts\smoke.ps1` runs a basic syntax + bridge check. A legacy Python server in [`mcp/main.py`](mcp/main.py) exists for reference — see [`docs/MCP.md`](docs/MCP.md).
 
-Legacy rectangle overlay; see Node shim above for the full Pupil indicator model.
+## How it works
 
-### Cursor MCP registration (example)
+```mermaid
+flowchart LR
+    Agent[AI_Agent] -->|MCP_stdio| Shim[pupil-mcp.js]
+    Shim -->|IPC| Daemon[Electron_daemon]
+    Daemon -->|spawn| Core[pupil_core]
+```
 
-Configure a local MCP server command that launches:
+- **`app/bin/pupil-mcp.js`** — MCP stdio entry; loads [`app/src/shim`](app/src/shim) and the Electron overlay daemon.
+- **`core/`** — .NET native sidecar (`pupil-core.exe`) that does the actual perception.
+- **`mcp/`** — optional Python server ([`mcp/main.py`](mcp/main.py)) — legacy / minimal; most setups use Node only.
+- **`scripts/`** — Windows build, smoke, and kill helpers.
 
-- command: `python`
-- args: `[".\\mcp\\main.py"]`
-- working directory: repository root
+## Documentation
 
-## Status & roadmap
+- [`docs/MCP.md`](docs/MCP.md) — full MCP & indicator contract (`perceive` / `indicate`, types, accept semantics, response shape).
 
-- Early development; **Windows-focused** today.
-- Integrations and docs will grow as the project stabilizes.
+## Status & community
 
-## How to reach me
-
-**GitHub Issues:** [github.com/ADevillers/Pupil/issues](https://github.com/ADevillers/Pupil/issues) — bugs, ideas, and questions.
+Early development, **Windows-focused** today. This is my first open-source project — feedback, bug reports, and questions are very welcome via [GitHub Issues](https://github.com/ADevillers/Pupil/issues).
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+[MIT](LICENSE)
