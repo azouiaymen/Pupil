@@ -9,10 +9,12 @@ Pupil is a Windows MCP server that lets an AI agent **perceive** your UI as stru
 Demo where the human operator only does : `Tab`, `Tab`, `Tab`...
 
 <p align="center">
-  <video src="docs/assets/demo.mp4" controls playsinline width="800">
-    <a href="docs/assets/demo.mp4">Download demo.mp4</a>
-  </video>
+  <a href="docs/assets/demo.mp4">
+    <img src="docs/assets/demo.gif" alt="Pupil demo — agent perceives the UI and indicates the next click while the user only presses Tab." width="800" />
+  </a>
 </p>
+
+<p align="center"><sub>Click the GIF for the full-quality MP4.</sub></p>
 
 ## Why Pupil
 
