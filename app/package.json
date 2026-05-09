@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node src/shim/index.js",
     "daemon": "electron src/daemon/main.cjs",
-    "check": "node --check src/shim/index.js"
+    "check": "node --check src/shim/index.js",
+    "check:bridge": "node --check src/overlay/preload.cjs && node --check src/overlay/renderer.js"
   },
   "license": "MIT",
   "packageManager": "pnpm@10.32.1",
